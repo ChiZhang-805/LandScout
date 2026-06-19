@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: landscout-agent
+    runtime: python
+    plan: free
+    buildCommand: |
+      python -m pip install --upgrade pip
+      python -m pip install -e .
+      python -m playwright install chromium
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: APP_NAME
+        value: LandScout Agent（地脉智能体）
+      - key: USER_AGENT
+        value: landscout-agent/0.1 (+public-source-research)
+      - key: REQUEST_TIMEOUT_SECONDS
+        value: "30"
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/project/.cache/ms-playwright

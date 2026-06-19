@@ -147,6 +147,28 @@ http://127.0.0.1:8000
 
 选择“公开网站抓取”时仍需要 `OPENAI_API_KEY`；选择“演示数据”时不需要。
 
+## Render 公开部署
+
+仓库根目录已经包含 `render.yaml`，可在 Render 里作为 Blueprint 或 Python Web Service 部署。默认公开网页可以打开并运行“演示数据”；如果要在 Render 上跑“公开网站抓取”，需要在 Render 服务的 Environment 里配置：
+
+- `OPENAI_API_KEY`：真实抓取后的 LLM 分析必需。
+- `OPENAI_MODEL` / `OPENAI_FAST_MODEL` / `OPENAI_EMBEDDING_MODEL`：可选，不填时使用默认模型。
+- `AMAP_KEY`：可选；不填时仍可在网页输入高德 Key，或使用内置上海 gazetteer fallback。
+- `OPENAI_PROXY`：Render 海外环境通常不需要配置。
+
+Render 配置要点：
+
+```yaml
+buildCommand: |
+  python -m pip install --upgrade pip
+  python -m pip install -e .
+  python -m playwright install chromium
+startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+healthCheckPath: /health
+```
+
+Render 的公网服务适合展示网页和跑轻量演示；真实公开网站抓取可能耗时较长，免费实例还可能休眠，首次访问和首次抓取会慢一些。生产化时建议把抓取改成后台任务队列，前端只轮询任务状态。
+
 ## 数据源
 
 配置文件位于 `app/sources/configs/shanghai_sources.yml`，包含：
