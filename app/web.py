@@ -355,7 +355,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     .ui-icon{width:16px;height:16px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round;display:inline-block;vertical-align:-3px;flex:0 0 auto}.ui-icon.small{width:14px;height:14px}.ui-icon-lg{width:18px;height:18px}.icon-blue{color:var(--blue)}.icon-muted{color:var(--muted)}.icon-green{color:var(--green)}.icon-amber{color:var(--amber)}
     input,select,textarea{width:100%;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:var(--text);padding:8px 10px;min-height:36px;font-size:14px}
     .secret-field{position:relative}.secret-field input{padding-right:42px}.secret-toggle{position:absolute;right:7px;top:50%;transform:translateY(-50%);width:30px;height:30px;border:0;border-radius:6px;background:transparent;color:#475467;display:grid;place-items:center;cursor:pointer}.secret-toggle:hover{background:#eef2f6;color:#1d2939}.secret-toggle:focus-visible{outline:2px solid #84adff;outline-offset:1px}
-    textarea{min-height:116px;resize:vertical;line-height:1.45}.controls>.panel:nth-child(2) textarea{flex:1;height:100%;resize:vertical}.run{width:100%;border:0;border-radius:6px;background:var(--blue);color:#fff;font-weight:700;min-height:40px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px}.run:disabled{opacity:.62;cursor:default}
+    textarea{min-height:116px;resize:vertical;line-height:1.45}.controls>.panel:nth-child(2) textarea{height:283px;min-height:170px;resize:vertical}.run{width:100%;border:0;border-radius:6px;background:var(--blue);color:#fff;font-weight:700;min-height:40px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px}.run:disabled{opacity:.62;cursor:default}
     .secondary{border:1px solid #cbd5e1;background:#fff;color:#344054;border-radius:6px;min-height:34px;padding:7px 10px;cursor:pointer}.source-list{display:grid;gap:6px;max-height:188px;overflow:auto}
     .controls>.panel:last-child{min-height:0;display:flex;flex-direction:column}.controls>.panel:last-child .source-list{flex:1;min-height:188px;max-height:none;align-content:start}
     .source-item{display:grid;grid-template-columns:28px minmax(0,1fr);gap:8px;align-items:start;border-top:1px solid #eef2f6;padding-top:7px;font-size:12px}.source-item:first-child{border-top:0;padding-top:0}
@@ -364,7 +364,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     .status{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;color:#25314a}.dot{width:10px;height:10px;border-radius:50%;background:#98a2b3;box-shadow:0 0 0 5px #eef2f7}.dot.running{background:var(--amber);box-shadow:0 0 0 5px #fff3e0}.dot.done{background:var(--green);box-shadow:0 0 0 5px #e7f7f2}.dot.error{background:var(--red);box-shadow:0 0 0 5px #fee4e2}
     .progress-block{display:grid;gap:8px}.progress-track{height:12px;background:#e3eaf2;border:1px solid #d8e1ec;border-radius:999px;overflow:hidden;position:relative;box-shadow:inset 0 1px 2px rgba(16,24,40,.08)}.progress-fill{height:100%;width:0%;border-radius:999px;background:#98a2b3;transition:width .45s ease,background .2s ease}.progress-fill.running{background:linear-gradient(90deg,var(--blue),var(--teal));position:relative}.progress-fill.running:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.46),transparent);animation:progress-shine 1.5s linear infinite}.progress-fill.done{background:var(--green)}.progress-fill.error{background:var(--red)}.progress-meta{display:flex;justify-content:space-between;gap:16px;font-size:12px;color:var(--muted);line-height:1.45}.progress-meta span:last-child{font-weight:700;color:#475467}@keyframes progress-shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
     .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:8px}.metric{border:1px solid #e4e7ec;border-radius:8px;background:#f8fafc;padding:10px}.metric strong{display:flex;align-items:center;gap:6px;font-size:20px}.metric span{font-size:12px;color:var(--muted)}
-    .map-panel{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:0}.map-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #e4e7ec;flex:0 0 auto}.map-title{font-size:15px;font-weight:700;line-height:1.2;display:flex;align-items:center;gap:8px}.map-sub{font-size:12px;color:var(--muted);margin-top:5px}.map-sub:empty{display:none}.map-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.map-tools input{width:190px;min-height:32px;font-size:12px}.map-tools button{min-height:32px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#344054;padding:6px 9px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px}
+    .map-panel{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:720px}.map-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #e4e7ec;flex:0 0 auto}.map-title{font-size:15px;font-weight:700;line-height:1.2;display:flex;align-items:center;gap:8px}.map-sub{font-size:12px;color:var(--muted);margin-top:5px}.map-sub:empty{display:none}.map-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.map-tools input{width:190px;min-height:32px;font-size:12px}.map-tools button{min-height:32px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#344054;padding:6px 9px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px}
     #opportunityMap{height:auto;min-height:430px;flex:1;position:relative;background:#dfe7ef;overflow:hidden}.map-placeholder{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),#dfe7ef;background-size:54px 54px;color:#334155}.map-placeholder:before{content:"上海坐标示意图";position:absolute;left:18px;top:16px;font-size:13px;font-weight:700;color:#334155}.map-placeholder:after{content:"输入高德 JS API Key 后显示真实地图";position:absolute;left:18px;top:38px;font-size:12px;color:#667085}.coord-dot{position:absolute;border:2px solid rgba(29,78,216,.82);background:rgba(29,78,216,.20);border-radius:50%;transform:translate(-50%,-50%);display:grid;place-items:center;color:#0f172a;font-size:12px;font-weight:700}.coord-label{position:absolute;transform:translate(12px,-50%);background:rgba(255,255,255,.92);border:1px solid #d7dee8;border-radius:6px;padding:5px 7px;font-size:12px;white-space:nowrap;box-shadow:0 1px 2px rgba(16,24,40,.08)}.legend{position:absolute;right:12px;bottom:12px;background:rgba(255,255,255,.94);border:1px solid #d7dee8;border-radius:6px;padding:8px 10px;font-size:12px;color:#344054}
     #areasPanel,#filesPanel{min-height:118px}.areas{display:grid;gap:10px}.area{border-top:1px solid #eef2f6;padding-top:12px}.area:first-child{border-top:0;padding-top:0}.area-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.area-title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px}.badge{font-size:12px;color:#0f5132;background:#ecfdf3;border:1px solid #abefc6;border-radius:999px;padding:3px 8px;white-space:nowrap}
     .scoreline{display:grid;grid-template-columns:110px 1fr 58px;gap:8px;align-items:center;margin:10px 0}.bar{height:9px;background:#e7edf3;border-radius:999px;overflow:hidden}.fill{height:100%;background:var(--blue);border-radius:999px}.small{font-size:12px;color:var(--muted);line-height:1.55}.reason{font-size:12px;line-height:1.55;color:#344054;margin-top:8px}.risk{color:#7c2d12}.file-groups{display:grid;gap:14px}.file-group-title{font-size:12px;font-weight:700;color:#475467;margin-bottom:8px}.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:8px}.file{min-height:38px;font-size:12px;text-decoration:none;color:#1849a9;border:1px solid #b2ccff;background:#eff4ff;border-radius:6px;padding:7px 10px;display:flex;align-items:center;gap:6px;justify-content:flex-start}
@@ -604,52 +604,20 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
       if(!mapPanel){
         return;
       }
-      if(window.matchMedia("(max-width: 980px)").matches){
-        mapPanel.style.minHeight = "";
-        mapPanel.style.height = "";
-        return;
-      }
       mapPanel.style.minHeight = "";
       mapPanel.style.height = "";
-      const top = mapPanel.getBoundingClientRect().top;
-      const bottomBreathingRoom = 8;
-      const targetHeight = Math.max(520, Math.floor(window.innerHeight - top - bottomBreathingRoom));
-      mapPanel.style.height = `${targetHeight}px`;
     }
     function alignCustomSourcesEditor(){
       if(!customSourcesInput){
         return;
       }
       const panel = customSourcesInput.closest(".panel");
-      const title = panel ? panel.querySelector("h2") : null;
-      if(!panel || !title){
-        return;
-      }
-      if(window.matchMedia("(max-width: 980px)").matches){
-        panel.style.height = "";
-        customSourcesInput.style.height = "";
-        customSourcesInput.style.minHeight = "";
+      if(!panel){
         return;
       }
       panel.style.height = "";
       customSourcesInput.style.height = "";
       customSourcesInput.style.minHeight = "";
-      const top = panel.getBoundingClientRect().top;
-      const bottomBreathingRoom = 8;
-      const targetPanelHeight = Math.max(180, Math.floor(window.innerHeight - top - bottomBreathingRoom));
-      panel.style.height = `${targetPanelHeight}px`;
-      const panelStyle = window.getComputedStyle(panel);
-      const titleStyle = window.getComputedStyle(title);
-      const availableHeight = Math.floor(
-        panel.clientHeight
-        - parseFloat(panelStyle.paddingTop)
-        - parseFloat(panelStyle.paddingBottom)
-        - title.offsetHeight
-        - parseFloat(titleStyle.marginBottom)
-      );
-      const editorHeight = Math.max(116, availableHeight);
-      customSourcesInput.style.height = `${editorHeight}px`;
-      customSourcesInput.style.minHeight = `${editorHeight}px`;
     }
     function alignDashboardLayout(){
       alignMapToViewportBottom();
