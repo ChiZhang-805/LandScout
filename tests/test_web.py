@@ -5,8 +5,11 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.core.config import effective_openai_api_key, settings
+from app.llm.schemas import Evidence, EventType, GovernmentEvent
 from app.main import app
 from app.pipeline.orchestrator import LandScoutAgentState
+from app.scoring.candidates import CandidateArea
+from app.scoring.residential import ResidentialCandidateScore
 from app.sources.registry import SourceConfig, SourceRegistry
 from app.web import WebRunRequest, build_runtime_registry, parse_custom_sources_text, state_to_web_response
 from app.web_tasks import WebTaskManager
@@ -364,3 +367,63 @@ def test_web_response_separates_triage_skips_from_errors():
     assert payload["filtered_document_count"] == 1
     assert len(payload["errors"]) == 1
     assert payload["errors"][0]["reason"] == "extract failed: synthetic"
+
+
+def test_web_response_adds_public_signal_links_to_candidate_areas():
+    event = GovernmentEvent(
+        id="event1",
+        source_id="source",
+        source_url="https://example.gov.cn/planning/detail.html",
+        event_type=EventType.PLANNING_POLICY,
+        title="规划调整公示",
+        lat=31.2912,
+        lon=121.1663,
+        evidence=[
+            Evidence(
+                source_id="source",
+                url="https://example.gov.cn/planning/detail.html",
+                quote="规划调整公示",
+            )
+        ],
+    )
+    score = ResidentialCandidateScore(
+        area=CandidateArea(
+            id="area1",
+            name="嘉定新城",
+            lat=31.2912,
+            lon=121.1663,
+            description="嘉定新城周边",
+        ),
+        future_population_inflow_score=20,
+        pre_inflow_signal_score=30,
+        land_grab_window_score=10,
+        demand_driver_score=10,
+        transport_public_service_score=0,
+        residential_land_access_score=0,
+        market_entry_score=0,
+        recency_score=50,
+        evidence_confidence_score=80,
+        residential_supply_pressure=0,
+        maturity_penalty=0,
+        geo_uncertainty_penalty=0,
+        residential_development_score=25,
+        opportunity_score=25,
+        confidence=0.8,
+        evidence_count=1,
+        evidence_event_ids=["event1"],
+        recommendation="观察跟踪",
+        next_action="观察池",
+        suggested_product="持续监测",
+        key_reasons=["规划政策信号 1 条"],
+        major_risks=["不在网页候选卡片中展示"],
+    )
+    payload = state_to_web_response(LandScoutAgentState(run_id="run", events=[event], residential_scores=[score]))
+
+    links = payload["top_areas"][0]["signal_links"]
+    assert links == [
+        {
+            "label": "规划政策信号",
+            "title": "规划调整公示",
+            "url": "https://example.gov.cn/planning/detail.html",
+        }
+    ]

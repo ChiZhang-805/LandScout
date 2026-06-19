@@ -19,6 +19,19 @@ from app.sources.registry import SourceConfig, SourceRegistry
 
 COMMON_ATTACHMENT_TYPES = [".pdf", ".xlsx", ".xls", ".docx", ".doc", ".csv", ".json"]
 BRAND_LOGO_FILENAME = "landscout_agent_icon.png"
+EVENT_SIGNAL_LABELS = {
+    "land_supply": "土地供应",
+    "land_transaction": "土地成交",
+    "major_project": "重大项目",
+    "infrastructure": "交通基建",
+    "industrial_project": "产业项目",
+    "public_service": "公共服务",
+    "investment_signing": "招商签约",
+    "project_approval": "项目批复",
+    "planning_policy": "规划政策",
+    "residential_supply": "住宅供应",
+    "other": "公开",
+}
 DEFAULT_CUSTOM_KEYWORDS = [
     "住宅",
     "居住",
@@ -238,6 +251,7 @@ def state_to_web_response(state: LandScoutAgentState, *, top_k: int | None = Non
     if top_k is not None:
         top_scores = top_scores[:top_k]
     visible_errors = actionable_errors(state.errors)
+    event_by_id = {event.id: event for event in state.events}
     return {
         "run_id": state.run_id,
         "visited_sources": state.visited_sources,
@@ -264,6 +278,7 @@ def state_to_web_response(state: LandScoutAgentState, *, top_k: int | None = Non
                 "suggested_product": score.suggested_product,
                 "key_reasons": score.key_reasons,
                 "major_risks": score.major_risks,
+                "signal_links": signal_links_for_area(score.evidence_event_ids, event_by_id),
             }
             for score in top_scores
         ],
@@ -271,6 +286,42 @@ def state_to_web_response(state: LandScoutAgentState, *, top_k: int | None = Non
         "files": output_file_links(state),
         "city": "shanghai",
     }
+
+
+def signal_links_for_area(event_ids: list[str], event_by_id: dict[str, Any], *, limit: int = 5) -> list[dict[str, str]]:
+    links: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for event_id in event_ids:
+        event = event_by_id.get(event_id)
+        if not event:
+            continue
+        url = public_event_url(event)
+        if not url:
+            continue
+        event_type = getattr(event.event_type, "value", str(event.event_type))
+        key = (event_type, url)
+        if key in seen:
+            continue
+        seen.add(key)
+        links.append(
+            {
+                "label": f"{EVENT_SIGNAL_LABELS.get(event_type, '公开')}信号",
+                "title": event.title,
+                "url": url,
+            }
+        )
+        if len(links) >= limit:
+            break
+    return links
+
+
+def public_event_url(event: Any) -> str:
+    candidates = [getattr(event, "source_url", "")]
+    candidates.extend(evidence.url for evidence in getattr(event, "evidence", []) if getattr(evidence, "url", ""))
+    for url in candidates:
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            return url
+    return ""
 
 
 def output_file_links(state: LandScoutAgentState) -> list[dict[str, str]]:
@@ -367,7 +418,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     .map-panel{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:0}.map-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #e4e7ec;flex:0 0 auto}.map-title{font-size:15px;font-weight:700;line-height:1.2;display:flex;align-items:center;gap:8px}.map-sub{font-size:12px;color:var(--muted);margin-top:5px}.map-sub:empty{display:none}.map-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.map-tools input{width:190px;min-height:32px;font-size:12px}.map-tools button{min-height:32px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#344054;padding:6px 9px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px}
     #opportunityMap{height:auto;min-height:0;flex:1;position:relative;background:#dfe7ef;overflow:hidden}.map-placeholder{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),#dfe7ef;background-size:54px 54px;color:#334155}.map-placeholder:before{content:"上海坐标示意图";position:absolute;left:18px;top:16px;font-size:13px;font-weight:700;color:#334155}.map-placeholder:after{content:"输入高德 JS API Key 后显示真实地图";position:absolute;left:18px;top:38px;font-size:12px;color:#667085}.coord-dot{position:absolute;border:2px solid rgba(29,78,216,.82);background:rgba(29,78,216,.20);border-radius:50%;transform:translate(-50%,-50%);display:grid;place-items:center;color:#0f172a;font-size:12px;font-weight:700}.coord-label{position:absolute;transform:translate(12px,-50%);background:rgba(255,255,255,.92);border:1px solid #d7dee8;border-radius:6px;padding:5px 7px;font-size:12px;white-space:nowrap;box-shadow:0 1px 2px rgba(16,24,40,.08)}.legend{position:absolute;right:12px;bottom:12px;background:rgba(255,255,255,.94);border:1px solid #d7dee8;border-radius:6px;padding:8px 10px;font-size:12px;color:#344054}
     #areasPanel,#filesPanel{min-height:118px}.areas{display:grid;gap:10px}.area{border-top:1px solid #eef2f6;padding-top:12px}.area:first-child{border-top:0;padding-top:0}.area-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.area-title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px}.badge{font-size:12px;color:#0f5132;background:#ecfdf3;border:1px solid #abefc6;border-radius:999px;padding:3px 8px;white-space:nowrap}
-    .scoreline{display:grid;grid-template-columns:110px 1fr 58px;gap:8px;align-items:center;margin:10px 0}.bar{height:9px;background:#e7edf3;border-radius:999px;overflow:hidden}.fill{height:100%;background:var(--blue);border-radius:999px}.small{font-size:12px;color:var(--muted);line-height:1.55}.reason{font-size:12px;line-height:1.55;color:#344054;margin-top:8px}.risk{color:#7c2d12}.file-groups{display:grid;gap:14px}.file-group-title{font-size:12px;font-weight:700;color:#475467;margin-bottom:8px}.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:8px}.file{min-height:38px;font-size:12px;text-decoration:none;color:#1849a9;border:1px solid #b2ccff;background:#eff4ff;border-radius:6px;padding:7px 10px;display:flex;align-items:center;gap:6px;justify-content:flex-start}
+    .scoreline{display:grid;grid-template-columns:110px 1fr 58px;gap:8px;align-items:center;margin:10px 0}.bar{height:9px;background:#e7edf3;border-radius:999px;overflow:hidden}.fill{height:100%;background:var(--blue);border-radius:999px}.small{font-size:12px;color:var(--muted);line-height:1.55}.coord-text{margin-top:2px}.reason{font-size:12px;line-height:1.55;color:#344054;margin-top:8px}.signal-links{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.signal-link{font-size:12px;text-decoration:none;color:#1849a9;border:1px solid #b2ccff;background:#eff4ff;border-radius:999px;padding:5px 9px;display:inline-flex;align-items:center;gap:5px;line-height:1.2}.signal-link:hover{background:#dbeafe;border-color:#84adff}.risk{color:#7c2d12}.file-groups{display:grid;gap:14px}.file-group-title{font-size:12px;font-weight:700;color:#475467;margin-bottom:8px}.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:8px}.file{min-height:38px;font-size:12px;text-decoration:none;color:#1849a9;border:1px solid #b2ccff;background:#eff4ff;border-radius:6px;padding:7px 10px;display:flex;align-items:center;gap:6px;justify-content:flex-start}
     .errors{display:grid;gap:6px}.error-row{font-size:12px;color:#7a271a;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px;overflow-wrap:anywhere;display:flex;align-items:flex-start;gap:6px}.empty{font-size:13px;color:var(--muted);padding:18px 0}
     @media(max-width:980px){.shell{grid-template-columns:1fr;grid-template-rows:auto}.controls,.results{display:grid;gap:12px}.controls>.panel,.results>.panel{grid-column:auto!important;grid-row:auto!important}.controls>.panel:last-child .source-list{max-height:260px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.topbar{height:auto;align-items:flex-start;padding:14px 16px;flex-direction:column}.key{white-space:normal}}
   </style>
@@ -715,6 +766,25 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         </section>
       `).join("")}</div>`;
     }
+    function formatCoordinate(area){
+      const lat = Number(area && area.lat);
+      const lon = Number(area && area.lon);
+      if(!Number.isFinite(lat) || !Number.isFinite(lon)){
+        return "";
+      }
+      return `(${lat.toFixed(2)}, ${lon.toFixed(2)})`;
+    }
+    function renderSignalLinks(links){
+      const validLinks = (links || []).filter(link => link && link.url);
+      if(!validLinks.length){
+        return "";
+      }
+      return `<div class="signal-links">${validLinks.map(link => `
+        <a class="signal-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener" title="${escapeHtml(link.title || link.label || "")}">
+          ${icon("file","small")}${escapeHtml(link.label || "公开信号")}
+        </a>
+      `).join("")}</div>`;
+    }
     function renderResult(data){
       lastAreas = data.top_areas || [];
       summaryPanel.innerHTML = `
@@ -725,16 +795,21 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
       const areas = data.top_areas || [];
       areasPanel.innerHTML = `<h2>${icon("target")}候选区域</h2>` + (areas.length ? `<div class="areas">${areas.map((area, idx) => {
         const score = Math.max(0, Math.min(100, Number(area.score || 0)));
+        const coordinate = formatCoordinate(area);
         return `
           <div class="area">
             <div class="area-head">
-              <div><div class="area-title">${icon("pin","small icon-blue")}${idx + 1}. ${escapeHtml(area.name)}</div><div class="small">${escapeHtml(area.description)}</div></div>
+              <div>
+                <div class="area-title">${icon("pin","small icon-blue")}${idx + 1}. ${escapeHtml(area.name)}</div>
+                <div class="small">${escapeHtml(area.description)}</div>
+                ${coordinate ? `<div class="small coord-text">坐标 ${escapeHtml(coordinate)}</div>` : ""}
+              </div>
               <div class="badge">${escapeHtml(area.recommendation)}</div>
             </div>
             <div class="scoreline"><span class="small">住宅开发分</span><div class="bar"><div class="fill" style="width:${score}%"></div></div><strong>${score.toFixed(2)}</strong></div>
             <div class="reason">${escapeHtml(area.next_action)}</div>
             <div class="reason">${escapeHtml((area.key_reasons || []).slice(0,2).join("；"))}</div>
-            <div class="reason risk">${escapeHtml((area.major_risks || []).slice(0,2).join("；"))}</div>
+            ${renderSignalLinks(area.signal_links || [])}
           </div>`;
       }).join("")}</div>` : '<div class="empty">当前没有有证据支撑的候选区域。</div>');
       const files = data.files || [];
@@ -820,7 +895,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
           zIndex: 30,
         });
         const info = new AMap.InfoWindow({
-          content: `<div style="font-size:13px;line-height:1.55"><strong>${escapeHtml(area.name)}</strong><br>住宅开发分 ${escapeHtml(Number(area.score || 0).toFixed(2))}<br>坐标 ${escapeHtml(Number(area.lat).toFixed(6))}, ${escapeHtml(Number(area.lon).toFixed(6))}<br>${escapeHtml(area.recommendation || "")}</div>`,
+          content: `<div style="font-size:13px;line-height:1.55"><strong>${escapeHtml(area.name)}</strong><br>住宅开发分 ${escapeHtml(Number(area.score || 0).toFixed(2))}<br>坐标 ${escapeHtml(formatCoordinate(area))}<br>${escapeHtml(area.recommendation || "")}</div>`,
           offset: new AMap.Pixel(0, -18),
         });
         circle.on("click", () => info.open(amapInstance, center));
@@ -845,7 +920,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         const x = Math.max(4, Math.min(96, ((lon - bounds.minLon) / (bounds.maxLon - bounds.minLon)) * 100));
         const y = Math.max(5, Math.min(95, ((bounds.maxLat - lat) / (bounds.maxLat - bounds.minLat)) * 100));
         const size = Math.max(42, Math.min(150, Number(area.radius_m || 5000) / 65));
-        return `<div class="coord-dot" title="${escapeHtml(area.name)}" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px">${idx + 1}</div><div class="coord-label" style="left:${x}%;top:${y}%">${escapeHtml(area.name)} · ${escapeHtml(lat.toFixed(5))}, ${escapeHtml(lon.toFixed(5))}</div>`;
+        return `<div class="coord-dot" title="${escapeHtml(area.name)}" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px">${idx + 1}</div><div class="coord-label" style="left:${x}%;top:${y}%">${escapeHtml(area.name)} · ${escapeHtml(formatCoordinate(area))}</div>`;
       }).join("");
       mapContainer.innerHTML = `<div class="map-placeholder">${points}<div class="legend">${escapeHtml(note || "坐标为候选区中心点；圆半径来自评分候选区。")}</div></div>`;
       mapSub.textContent = `已绘制 ${areas.length} 个候选区域坐标覆盖圆。`;
