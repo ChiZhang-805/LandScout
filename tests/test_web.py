@@ -8,6 +8,7 @@ from app.main import app
 from app.pipeline.orchestrator import LandScoutAgentState
 from app.sources.registry import SourceConfig, SourceRegistry
 from app.web import WebRunRequest, build_runtime_registry, parse_custom_sources_text, state_to_web_response
+from app.web_tasks import WebTaskManager
 
 
 def wait_for_task(client: TestClient, task_id: str, timeout: float = 15.0) -> dict:
@@ -182,6 +183,50 @@ def test_web_task_reports_background_failure(monkeypatch):
     assert task["status"] == "failed"
     assert task["result"] is None
     assert "synthetic task failure" in task["error"]
+
+
+def test_web_task_manager_validates_task_ids():
+    manager = WebTaskManager(max_workers=1)
+
+    try:
+        manager.snapshot("../bad")
+    except ValueError as exc:
+        assert "Invalid task_id format" in str(exc)
+    else:
+        raise AssertionError("Invalid task id was accepted")
+
+
+def test_web_task_manager_prunes_completed_records():
+    manager = WebTaskManager(max_workers=1, max_records=2)
+    task_ids = [manager.submit(lambda idx=idx: {"idx": idx})["task_id"] for idx in range(3)]
+
+    for task_id in task_ids:
+        try:
+            wait_for_task_snapshot(manager, task_id)
+        except KeyError:
+            pass
+
+    remaining = [task_id for task_id in task_ids if task_snapshot_exists(manager, task_id)]
+    assert len(remaining) <= 2
+    assert task_ids[-1] in remaining
+
+
+def wait_for_task_snapshot(manager: WebTaskManager, task_id: str, timeout: float = 5.0) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        payload = manager.snapshot(task_id)
+        if payload["status"] in {"succeeded", "failed"}:
+            return payload
+        time.sleep(0.01)
+    raise AssertionError(f"Task {task_id} did not finish within {timeout} seconds")
+
+
+def task_snapshot_exists(manager: WebTaskManager, task_id: str) -> bool:
+    try:
+        manager.snapshot(task_id)
+    except KeyError:
+        return False
+    return True
 
 
 def test_web_request_passes_amap_key_to_pipeline(monkeypatch):

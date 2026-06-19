@@ -867,19 +867,50 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         pollTimer = null;
       }
     }
-    function clearActiveTask(){
+    function storedActiveTask(){
+      try{
+        return window.localStorage.getItem(TASK_STORAGE_KEY);
+      }catch(error){
+        return null;
+      }
+    }
+    function rememberActiveTask(taskId){
+      currentTaskId = taskId;
+      try{
+        window.localStorage.setItem(TASK_STORAGE_KEY, taskId);
+      }catch(error){
+        // Some privacy modes block localStorage; polling can still continue in memory.
+      }
+    }
+    function clearActiveTask(taskId = ""){
+      const storedTaskId = storedActiveTask();
+      if(taskId && currentTaskId && currentTaskId !== taskId){
+        return;
+      }
+      if(taskId && storedTaskId && storedTaskId !== taskId){
+        return;
+      }
       currentTaskId = null;
-      window.localStorage.removeItem(TASK_STORAGE_KEY);
+      try{
+        window.localStorage.removeItem(TASK_STORAGE_KEY);
+      }catch(error){
+        // Ignore storage failures; they should not break the dashboard.
+      }
     }
     async function pollTask(taskId){
-      currentTaskId = taskId;
+      if(currentTaskId !== taskId){
+        return;
+      }
       try{
         const response = await fetch(`/api/recommend-residential/tasks/${encodeURIComponent(taskId)}`);
         const data = await readApiJson(response);
+        if(currentTaskId !== taskId){
+          return;
+        }
         if(!response.ok){ throw new Error(data.detail || `任务查询失败（HTTP ${response.status}）`); }
         if(data.status === "succeeded"){
           stopPolling();
-          clearActiveTask();
+          clearActiveTask(taskId);
           renderResult(data.result);
           setStatus("done", "完成");
           stopProgressTimer();
@@ -889,7 +920,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         }
         if(data.status === "failed"){
           stopPolling();
-          clearActiveTask();
+          clearActiveTask(taskId);
           setStatus("error", data.error || data.message || "任务运行失败");
           stopProgressTimer();
           setProgress(Math.max(progressValue, 12), "任务失败，请查看错误信息或降低源数量重试", "error");
@@ -899,8 +930,11 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         setStatus("running", data.message || "后台任务运行中");
         pollTimer = window.setTimeout(() => pollTask(taskId), 2500);
       }catch(error){
+        if(currentTaskId !== taskId){
+          return;
+        }
         stopPolling();
-        clearActiveTask();
+        clearActiveTask(taskId);
         setStatus("error", error.message || String(error));
         stopProgressTimer();
         setProgress(Math.max(progressValue, 12), "任务状态查询失败，请稍后刷新页面重试", "error");
@@ -908,7 +942,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
       }
     }
     function resumeActiveTask(){
-      const taskId = window.localStorage.getItem(TASK_STORAGE_KEY);
+      const taskId = storedActiveTask();
       if(!taskId){ return; }
       currentTaskId = taskId;
       runBtn.disabled = true;
@@ -945,8 +979,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         const data = await readApiJson(response);
         if(!response.ok){ throw new Error(data.detail || "运行失败"); }
         if(!data.task_id){ throw new Error("后台任务没有返回 task_id"); }
-        currentTaskId = data.task_id;
-        window.localStorage.setItem(TASK_STORAGE_KEY, currentTaskId);
+        rememberActiveTask(data.task_id);
         setStatus("running", data.message || "后台任务已创建");
         pollTask(currentTaskId);
       }catch(error){
