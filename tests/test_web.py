@@ -1,0 +1,204 @@
+from fastapi.testclient import TestClient
+
+from app import main
+from app.main import app
+from app.pipeline.orchestrator import LandScoutAgentState
+from app.sources.registry import SourceConfig, SourceRegistry
+from app.web import WebRunRequest, build_runtime_registry, parse_custom_sources_text, state_to_web_response
+
+
+def test_parse_custom_sources_text_accepts_line_format():
+    sources = parse_custom_sources_text(
+        "浦东规划 | https://www.pudong.gov.cn/ | 住宅,地块,规划\n"
+        "https://www.lingang.gov.cn/"
+    )
+
+    assert len(sources) == 2
+    assert sources[0].name == "浦东规划"
+    assert str(sources[0].base_urls[0]) == "https://www.pudong.gov.cn/"
+    assert sources[0].keywords[:3] == ["住宅", "地块", "规划"]
+    assert sources[0].access_mode == "http_then_playwright"
+    assert sources[1].name == "www.lingang.gov.cn"
+
+
+def test_parse_custom_sources_text_accepts_json_config():
+    sources = parse_custom_sources_text(
+        """
+        {
+          "sources": [
+            {
+              "name": "测试源",
+              "base_urls": ["https://example.gov.cn/list.html"],
+              "keywords": ["住宅", "招商"],
+              "max_pages": 3
+            }
+          ]
+        }
+        """
+    )
+
+    assert len(sources) == 1
+    assert sources[0].name == "测试源"
+    assert sources[0].max_pages == 3
+    assert sources[0].keywords == ["住宅", "招商"]
+
+
+def test_build_runtime_registry_merges_builtin_and_custom_sources():
+    base = SourceRegistry(
+        [
+            SourceConfig(id="builtin_1", name="Builtin 1", base_urls=["https://one.gov.cn/"], priority=10),
+            SourceConfig(id="builtin_2", name="Builtin 2", base_urls=["https://two.gov.cn/"], priority=20),
+        ]
+    )
+
+    runtime = build_runtime_registry(
+        base,
+        source_limit=1,
+        use_builtin_sources=True,
+        custom_sources_text="Custom | https://custom.gov.cn/ | 住宅",
+    )
+
+    assert [source.id for source in runtime.sources][0] == "builtin_1"
+    assert any(source.name == "Custom" for source in runtime.sources)
+    assert len(runtime.sources) == 2
+
+
+def test_web_dashboard_renders_without_auto_running_pipeline():
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "搜索并分析" in response.text
+    assert "尚未运行" in response.text
+    assert "/api/recommend-residential" in response.text
+    assert 'id="city"' in response.text
+    assert 'id="amapKey"' in response.text
+    assert 'id="opportunityMap"' in response.text
+    assert 'class="brand-logo"' in response.text
+    assert '<input id="amapKey" type="password"' in response.text
+    assert '<input id="amapSecurityCode" type="password"' in response.text
+    assert 'data-secret-toggle="amapKey"' in response.text
+    assert 'data-secret-toggle="amapSecurityCode"' in response.text
+    assert "function setupSecretToggles()" in response.text
+    assert "异常/访问限制" not in response.text
+    source_limit_max = len(main.registry.sources)
+    source_limit_default = min(12, source_limit_max)
+    assert (
+        f'id="sourceLimit" type="number" min="1" max="{source_limit_max}" '
+        f'step="1" value="{source_limit_default}"'
+    ) in response.text
+
+
+def test_brand_logo_asset_is_served_when_present():
+    client = TestClient(app)
+
+    response = client.get("/assets/landscout-agent-icon.png")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/")
+    assert len(response.content) > 1000
+
+
+def test_web_recommend_residential_fixture_run_honors_top_k():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/recommend-residential",
+        json={"live": False, "days": 540, "top_k": 2, "source_limit": 12},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run_id"]
+    assert payload["city"] == "shanghai"
+    assert payload["event_count"] >= 20
+    assert len(payload["top_areas"]) == 2
+    assert payload["top_areas"][0]["lat"] is not None
+    assert payload["top_areas"][0]["lon"] is not None
+    assert payload["top_areas"][0]["radius_m"] > 0
+    assert any(file["filename"] == "recommendation.md" for file in payload["files"])
+    assert any(file["filename"] == "recommendation.md" and file["group"] for file in payload["files"])
+
+    file_response = client.get(f"/runs/{payload['run_id']}/files/recommendation.md")
+    assert file_response.status_code == 200
+    assert "上海住宅开发机会推荐报告" in file_response.text
+
+
+def test_web_rejects_unsupported_city():
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/recommend-residential",
+        json={"city": "hangzhou", "live": False, "days": 540, "top_k": 2, "source_limit": 12},
+    )
+
+    assert response.status_code == 400
+    assert "只支持上海" in response.text
+
+
+def test_web_request_passes_amap_key_to_pipeline(monkeypatch):
+    captured = {}
+
+    class FakeAgent:
+        def __init__(self, registry=None):  # type: ignore[no-untyped-def]
+            pass
+
+        def recommend_residential(self, **kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            return LandScoutAgentState(run_id="run")
+
+    monkeypatch.setattr(main, "LandScoutAgent", FakeAgent)
+
+    response = main.recommend_residential(
+        WebRunRequest(city="shanghai", live=False, days=540, top_k=2, source_limit=12, amap_key="amap-test")
+    )
+
+    assert response["run_id"] == "run"
+    assert captured["amap_key"] == "amap-test"
+
+
+def test_web_live_source_limit_is_capped_to_registry_size(monkeypatch):
+    captured = {}
+    small_registry = SourceRegistry(
+        [
+            SourceConfig(id="builtin_1", name="Builtin 1", base_urls=["https://one.gov.cn/"], priority=10),
+            SourceConfig(id="builtin_2", name="Builtin 2", base_urls=["https://two.gov.cn/"], priority=20),
+        ]
+    )
+
+    class FakeAgent:
+        def __init__(self, registry=None):  # type: ignore[no-untyped-def]
+            captured["registry_size"] = len(registry.sources)
+
+        def recommend_residential(self, **kwargs):  # type: ignore[no-untyped-def]
+            captured.update(kwargs)
+            return LandScoutAgentState(run_id="run")
+
+    monkeypatch.setattr(main, "registry", small_registry)
+    monkeypatch.setattr(main, "LandScoutAgent", FakeAgent)
+
+    response = main.recommend_residential(
+        WebRunRequest(city="shanghai", live=True, days=540, top_k=2, source_limit=5)
+    )
+
+    assert response["run_id"] == "run"
+    assert captured["registry_size"] == 2
+    assert captured["source_limit"] == 2
+
+
+def test_web_response_separates_triage_skips_from_errors():
+    state = LandScoutAgentState(
+        run_id="run",
+        errors=[
+            {"source_id": "doc", "url": "fixture://skip", "reason": "document triage skipped: no relevant signal keywords found", "stage": "document_triage"},
+            {"source_id": "doc", "url": "fixture://fail", "reason": "extract failed: synthetic"},
+        ],
+    )
+
+    payload = state_to_web_response(state)
+
+    assert payload["error_count"] == 1
+    assert payload["filtered_document_count"] == 1
+    assert len(payload["errors"]) == 1
+    assert payload["errors"][0]["reason"] == "extract failed: synthetic"

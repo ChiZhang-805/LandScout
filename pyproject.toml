@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "landscout-agent"
+version = "0.1.0"
+description = "LandScout Agent: Shanghai public government information to real estate development site-selection signals."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.111",
+  "uvicorn[standard]>=0.29",
+  "SQLAlchemy>=2.0",
+  "alembic>=1.13",
+  "psycopg[binary]>=3.1",
+  "httpx>=0.27",
+  "beautifulsoup4>=4.12",
+  "playwright>=1.44",
+  "PyMuPDF>=1.24",
+  "pdfplumber>=0.11",
+  "openpyxl>=3.1",
+  "xlrd>=2.0",
+  "pandas>=2.2",
+  "numpy>=1.26",
+  "scikit-learn>=1.4",
+  "pydantic>=2.7",
+  "openai>=1.50",
+  "folium>=0.17",
+  "rich>=13.7",
+  "pytest>=8.2",
+  "python-dotenv>=1.0",
+  "PyYAML>=6.0",
+  "python-docx>=1.1",
+  "tenacity>=8.3"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2",
+  "pytest-cov>=5.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

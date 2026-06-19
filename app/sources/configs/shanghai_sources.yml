@@ -1,0 +1,155 @@
+sources:
+  - id: sh_land_market
+    name: 上海土地市场
+    base_urls:
+      - https://biz.ghzyj.sh.gov.cn/shtdsc/wz/
+      - https://biz.ghzyj.sh.gov.cn/shtdsc/wz/tdjy/index.jhtml
+      - https://biz.ghzyj.sh.gov.cn/shtdsc/jy/view/web/transaction/block/list_block.html?paneTabsSelect=0
+      - https://biz.ghzyj.sh.gov.cn/shtdsc/jy/view/web/transaction/indexNotice/list_notice.html?currentLoc=网上公告
+    access_mode: http_then_playwright
+    priority: 10
+    max_pages: 4
+    delay: 1.5
+    keywords: ["地块", "土地", "出让", "公告", "成交", "规划"]
+    attachment_types: [".pdf", ".xlsx", ".xls", ".docx", ".doc"]
+    notes: "土地交易、网上公告、地块列表。"
+
+  - id: sh_planning_resources
+    name: 上海市规划和自然资源局
+    base_urls:
+      - https://ghzyj.sh.gov.cn/
+      - https://ghzyj.sh.gov.cn/ghgs/
+      - https://ghzyj.sh.gov.cn/zwgk/
+    access_mode: http_then_playwright
+    priority: 15
+    max_pages: 3
+    delay: 1.5
+    keywords: ["国土空间", "详细规划", "控制性详细规划", "土地", "用途", "更新", "产业", "交通", "公共服务"]
+    attachment_types: [".pdf", ".xlsx", ".xls", ".docx", ".doc"]
+    notes: "规划资源、空间规划、土地利用和规划实施政策。"
+
+  - id: sh_fgw_major_projects
+    name: 上海市发改委重大建设项目清单
+    base_urls:
+      - https://fgw.sh.gov.cn/fgw_zdjsxmqd/index.html
+    access_mode: http
+    priority: 20
+    max_pages: 3
+    delay: 1.2
+    keywords: ["重大建设项目", "重大工程", "项目清单", "工程清单", "清单", "年度", "xlsx", "附件"]
+    attachment_types: [".xlsx", ".xls"]
+    notes: "自动下载并解析最新 3 年 xlsx 附件。"
+
+  - id: sh_fgw_project_approvals
+    name: 上海市发改委项目批复结果
+    base_urls:
+      - https://fgw.sh.gov.cn/fgw_xmpfjg/index.html
+    access_mode: http
+    priority: 30
+    max_pages: 3
+    delay: 1.2
+    keywords: ["批复", "核准", "备案", "项目", "基础设施", "产业"]
+    attachment_types: [".pdf", ".docx", ".xlsx", ".xls"]
+    notes: "项目批复、核准和备案结果。"
+
+  - id: sh_construction_exchange
+    name: 上海市建设工程交易服务中心
+    base_urls:
+      - https://www.shcpe.cn/
+      - https://www.shcpe.cn/jyxx/transaction.html
+    access_mode: http_then_playwright
+    priority: 40
+    max_pages: 3
+    delay: 1.5
+    keywords: ["招标", "中标", "建设工程", "交易", "轨道", "市政"]
+    attachment_types: [".pdf", ".docx", ".xlsx", ".xls"]
+    notes: "建设工程交易、招投标和中标信息。"
+
+  - id: sh_transport_commission
+    name: 上海市交通委员会
+    base_urls:
+      - https://jtw.sh.gov.cn/
+      - https://jtw.sh.gov.cn/gsgg/
+    access_mode: http_then_playwright
+    priority: 45
+    max_pages: 3
+    delay: 1.5
+    keywords: ["轨道交通", "地方铁路", "枢纽", "道路", "桥梁", "隧道", "公交", "交通规划", "建设规划"]
+    attachment_types: [".pdf", ".xlsx", ".xls", ".docx", ".doc"]
+    notes: "交通建设、轨道交通、地方铁路和枢纽规划信号。"
+
+  - id: sh_housing_tender
+    name: 上海住建委工程招投标
+    base_urls:
+      - https://zjw.sh.gov.cn/zbwjgg/index.html
+    access_mode: http
+    priority: 50
+    max_pages: 3
+    delay: 1.2
+    keywords: ["招标", "中标", "施工", "工程", "建设"]
+    attachment_types: [".pdf", ".docx", ".xlsx", ".xls"]
+    notes: "住建委工程招投标公开信息。"
+
+  - id: sh_open_data
+    name: 上海市公共数据开放平台
+    base_urls:
+      - https://data.sh.gov.cn/
+    access_mode: playwright_with_network_discovery
+    priority: 60
+    max_pages: 2
+    delay: 2.0
+    keywords: ["交通", "学校", "医院", "就业", "人口", "企业", "园区", "建设", "公共服务"]
+    attachment_types: [".json", ".csv", ".xlsx", ".xls"]
+    notes: "仅采集无需登录且公开可访问的数据集或接口。"
+
+  - id: sh_stats_yearbook
+    name: 上海市统计局统计年鉴
+    base_urls:
+      - https://tjj.sh.gov.cn/tjnj/index.html
+    access_mode: http
+    priority: 70
+    max_pages: 2
+    delay: 1.2
+    keywords: ["统计年鉴", "人口", "就业", "产业", "投资", "建设"]
+    attachment_types: [".pdf", ".xlsx", ".xls"]
+    notes: "统计年鉴与相关指标。"
+
+  - id: sh_econ_info_commission
+    name: 上海市经济和信息化委员会
+    base_urls:
+      - https://sheitc.sh.gov.cn/
+      - https://www.sheitc.sh.gov.cn/gg/index.html
+      - https://sheitc.sh.gov.cn/zxzjxgzl/index.html
+    access_mode: http_then_playwright
+    priority: 75
+    max_pages: 3
+    delay: 1.5
+    keywords: ["产业", "园区", "专项资金", "项目", "智能制造", "集成电路", "生物医药", "人工智能", "产业地图"]
+    attachment_types: [".pdf", ".xlsx", ".xls", ".docx", ".doc"]
+    notes: "产业政策、园区、专项资金和重点产业项目线索。"
+
+  - id: sh_invest_promotion
+    name: 上海投资促进 / 商务招商动态
+    base_urls:
+      - https://www.shanghaiinvest.com/cn/info/
+    access_mode: http
+    priority: 80
+    max_pages: 3
+    delay: 1.2
+    keywords: ["招商", "投资", "签约", "产业", "园区", "落地"]
+    attachment_types: [".pdf", ".docx", ".xlsx", ".xls"]
+    notes: "投资促进、招商动态和签约项目。"
+
+  - id: sh_lingang_committee
+    name: 临港新片区管委会
+    base_urls:
+      - https://www.lingang.gov.cn/
+      - https://www.lingang.gov.cn/html/website/lg/index/government/gonggaogongshi/zhuanxianggongshi/index.html
+      - https://www.lingang.gov.cn/html/website/lg/index/government/gonggaogongshi/qitagongshi/index.html
+    access_mode: http_then_playwright
+    priority: 85
+    max_pages: 3
+    delay: 1.5
+    keywords: ["临港", "新片区", "产业", "专项", "项目", "公示", "集成电路", "人工智能", "生物医药", "科技创新"]
+    attachment_types: [".pdf", ".xlsx", ".xls", ".docx", ".doc"]
+    notes: "临港新片区政策、公示、产业专项和重点项目。"
