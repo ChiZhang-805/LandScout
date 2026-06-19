@@ -508,8 +508,10 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     let pollTimer = null;
     let progressValue = 0;
     let currentTaskId = null;
+    let pollFailureCount = 0;
     let customSourcesUserAdjusted = false;
     const TASK_STORAGE_KEY = "landscout.currentTaskId";
+    const MAX_TRANSIENT_POLL_FAILURES = 18;
     const ICONS = {
       alert: '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.7 2.4 17.4A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.6L13.7 3.7a2 2 0 0 0-3.4 0Z"/>',
       building: '<path d="M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M16 8h2a2 2 0 0 1 2 2v11"/><path d="M8 7h4"/><path d="M8 11h4"/><path d="M8 15h4"/><path d="M9 21v-3h2v3"/>',
@@ -852,13 +854,17 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
       const status = `${response.status} ${response.statusText || ""}`.trim();
       const text = await response.text();
       if(!text.trim()){
-        throw new Error(`接口返回空响应（HTTP ${status || "unknown"}）。通常是服务器超时、重启或连接被中断。`);
+        const error = new Error(`接口返回空响应（HTTP ${status || "unknown"}）。通常是服务器超时、重启或连接被中断。`);
+        error.httpStatus = response.status;
+        throw error;
       }
       try{
         return JSON.parse(text);
       }catch(error){
         const snippet = text.replace(/\s+/g, " ").slice(0, 240);
-        throw new Error(`接口返回的不是有效 JSON（HTTP ${status || "unknown"}）：${snippet || "无可读内容"}`);
+        const parseError = new Error(`接口返回的不是有效 JSON（HTTP ${status || "unknown"}）：${snippet || "无可读内容"}`);
+        parseError.httpStatus = response.status;
+        throw parseError;
       }
     }
     function stopPolling(){
@@ -876,6 +882,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     }
     function rememberActiveTask(taskId){
       currentTaskId = taskId;
+      pollFailureCount = 0;
       try{
         window.localStorage.setItem(TASK_STORAGE_KEY, taskId);
       }catch(error){
@@ -891,11 +898,31 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         return;
       }
       currentTaskId = null;
+      pollFailureCount = 0;
       try{
         window.localStorage.removeItem(TASK_STORAGE_KEY);
       }catch(error){
         // Ignore storage failures; they should not break the dashboard.
       }
+    }
+    function isTransientPollError(error){
+      const status = Number(error && error.httpStatus || 0);
+      return !status || [408, 429, 502, 503, 504].includes(status);
+    }
+    function retryPollingAfterTransientError(taskId, error){
+      pollFailureCount += 1;
+      if(pollFailureCount > MAX_TRANSIENT_POLL_FAILURES){
+        return false;
+      }
+      const status = error && error.httpStatus ? `HTTP ${error.httpStatus}` : "网络连接";
+      setStatus("running", `状态查询暂时失败，正在重试 ${pollFailureCount}/${MAX_TRANSIENT_POLL_FAILURES}`);
+      setProgress(
+        Math.max(progressValue, 94),
+        `${status} 短暂不可用；后台任务可能仍在运行，继续查询状态`,
+        "running",
+      );
+      pollTimer = window.setTimeout(() => pollTask(taskId), 4000);
+      return true;
     }
     async function pollTask(taskId){
       if(currentTaskId !== taskId){
@@ -907,7 +934,12 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         if(currentTaskId !== taskId){
           return;
         }
-        if(!response.ok){ throw new Error(data.detail || `任务查询失败（HTTP ${response.status}）`); }
+        if(!response.ok){
+          const statusError = new Error(data.detail || `任务查询失败（HTTP ${response.status}）`);
+          statusError.httpStatus = response.status;
+          throw statusError;
+        }
+        pollFailureCount = 0;
         if(data.status === "succeeded"){
           stopPolling();
           clearActiveTask(taskId);
@@ -931,6 +963,9 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         pollTimer = window.setTimeout(() => pollTask(taskId), 2500);
       }catch(error){
         if(currentTaskId !== taskId){
+          return;
+        }
+        if(isTransientPollError(error) && retryPollingAfterTransientError(taskId, error)){
           return;
         }
         stopPolling();

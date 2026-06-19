@@ -1,3 +1,4 @@
+import json
 import time
 
 from fastapi.testclient import TestClient
@@ -100,6 +101,7 @@ def test_web_dashboard_renders_without_auto_running_pipeline():
     assert 'data-secret-toggle="amapKey"' in response.text
     assert 'data-secret-toggle="amapSecurityCode"' in response.text
     assert 'const TASK_STORAGE_KEY = "landscout.currentTaskId";' in response.text
+    assert "MAX_TRANSIENT_POLL_FAILURES" in response.text
     assert 'function pollTask(taskId)' in response.text
     assert "function setupSecretToggles()" in response.text
     assert "异常/访问限制" not in response.text
@@ -209,6 +211,43 @@ def test_web_task_manager_prunes_completed_records():
     remaining = [task_id for task_id in task_ids if task_snapshot_exists(manager, task_id)]
     assert len(remaining) <= 2
     assert task_ids[-1] in remaining
+
+
+def test_web_task_manager_restores_completed_record_from_disk(tmp_path):
+    manager = WebTaskManager(max_workers=1, tasks_dir=tmp_path)
+    task_id = manager.submit(lambda: {"ok": True})["task_id"]
+    wait_for_task_snapshot(manager, task_id)
+
+    restored = WebTaskManager(max_workers=1, tasks_dir=tmp_path)
+
+    payload = restored.snapshot(task_id)
+    assert payload["status"] == "succeeded"
+    assert payload["result"] == {"ok": True}
+
+
+def test_web_task_manager_marks_persisted_running_record_interrupted(tmp_path):
+    task_id = "0" * 32
+    (tmp_path / f"{task_id}.json").write_text(
+        json.dumps(
+            {
+                "task_id": task_id,
+                "status": "running",
+                "message": "后台正在抓取、解析和分析",
+                "created_at": "2026-06-19T00:00:00+00:00",
+                "updated_at": "2026-06-19T00:00:00+00:00",
+                "result": None,
+                "error": None,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    manager = WebTaskManager(max_workers=1, tasks_dir=tmp_path)
+
+    payload = manager.snapshot(task_id)
+
+    assert payload["status"] == "failed"
+    assert "重启" in payload["message"]
 
 
 def wait_for_task_snapshot(manager: WebTaskManager, task_id: str, timeout: float = 5.0) -> dict:
