@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from app.core.branding import PRODUCT_DISPLAY_NAME, PRODUCT_TAGLINE
 from app.core.config import PROJECT_ROOT, settings
 from app.core.utils import actionable_errors, document_triage_skip_count
+from app.parsers.models import ParsedDocument
 from app.pipeline.orchestrator import LandScoutAgentState
 from app.sources.registry import SourceConfig, SourceRegistry
 
@@ -278,7 +279,11 @@ def state_to_web_response(state: LandScoutAgentState, *, top_k: int | None = Non
                 "suggested_product": score.suggested_product,
                 "key_reasons": score.key_reasons,
                 "major_risks": score.major_risks,
-                "signal_links": signal_links_for_area(score.evidence_event_ids, event_by_id),
+                "signal_links": signal_links_for_area(
+                    score.evidence_event_ids,
+                    event_by_id,
+                    state.parsed_documents,
+                ),
             }
             for score in top_scores
         ],
@@ -288,14 +293,21 @@ def state_to_web_response(state: LandScoutAgentState, *, top_k: int | None = Non
     }
 
 
-def signal_links_for_area(event_ids: list[str], event_by_id: dict[str, Any], *, limit: int = 5) -> list[dict[str, str]]:
+def signal_links_for_area(
+    event_ids: list[str],
+    event_by_id: dict[str, Any],
+    parsed_documents: list[ParsedDocument] | None = None,
+    *,
+    limit: int = 5,
+) -> list[dict[str, str]]:
     links: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
+    documents = parsed_documents or []
     for event_id in event_ids:
         event = event_by_id.get(event_id)
         if not event:
             continue
-        url = public_event_url(event)
+        url = public_event_url(event, documents)
         if not url:
             continue
         event_type = getattr(event.event_type, "value", str(event.event_type))
@@ -315,13 +327,207 @@ def signal_links_for_area(event_ids: list[str], event_by_id: dict[str, Any], *, 
     return links
 
 
-def public_event_url(event: Any) -> str:
-    candidates = [getattr(event, "source_url", "")]
-    candidates.extend(evidence.url for evidence in getattr(event, "evidence", []) if getattr(evidence, "url", ""))
-    for url in candidates:
-        if isinstance(url, str) and url.startswith(("http://", "https://")):
-            return url
-    return ""
+def public_event_url(event: Any, parsed_documents: list[ParsedDocument] | None = None) -> str:
+    detail_url = best_detail_document_url(event, parsed_documents or [])
+    candidates = unique_public_urls(
+        [
+            detail_url,
+            getattr(event, "source_url", ""),
+            *[getattr(evidence, "url", "") for evidence in getattr(event, "evidence", [])],
+        ]
+    )
+    if not candidates:
+        return ""
+    return max(enumerate(candidates), key=lambda item: (detail_url_score(item[1]), -item[0]))[1]
+
+
+def best_detail_document_url(event: Any, parsed_documents: list[ParsedDocument]) -> str:
+    best_url = ""
+    best_score = 0
+    for document in parsed_documents:
+        match_score = document_event_match_score(event, document)
+        if match_score < 70:
+            continue
+        url = best_url_from_document(event, document)
+        if not url:
+            continue
+        total_score = match_score + detail_url_score(url)
+        if total_score > best_score:
+            best_score = total_score
+            best_url = url
+    return best_url
+
+
+def document_event_match_score(event: Any, document: ParsedDocument) -> int:
+    score = 0
+    document_text = normalized_match_text(document.text)
+    document_title = normalized_match_text(document.title)
+    source_id = getattr(event, "source_id", "")
+    if source_id and source_id == document.source_id:
+        score += 20
+
+    for quote in event_evidence_quotes(event):
+        normalized_quote = normalized_match_text(quote)
+        if len(normalized_quote) >= 8 and normalized_quote in document_text:
+            score += 220
+        elif len(normalized_quote) >= 12 and normalized_quote[:24] in document_text:
+            score += 120
+
+    for term in event_match_terms(event):
+        normalized_term = normalized_match_text(term)
+        if len(normalized_term) < 6:
+            continue
+        if normalized_term in document_title:
+            score += 100
+        if normalized_term in document_text[:120_000]:
+            score += 70
+    return score
+
+
+def best_url_from_document(event: Any, document: ParsedDocument) -> str:
+    document_url = document.url if is_public_http_url(document.url) else ""
+    link_url = best_matching_link_url(event, document)
+    if document_url and not is_likely_directory_url(document_url):
+        return document_url
+    if link_url:
+        return link_url
+    return document_url
+
+
+def best_matching_link_url(event: Any, document: ParsedDocument) -> str:
+    terms = [normalized_match_text(term) for term in [*event_match_terms(event), *event_evidence_quotes(event)]]
+    terms = [term for term in terms if len(term) >= 8]
+    best_url = ""
+    best_score = 0
+    for link in [*document.links, *document.attachments]:
+        url = str(link.get("url") or "").strip()
+        if not is_public_http_url(url):
+            continue
+        text = normalized_match_text(str(link.get("text") or ""))
+        score = detail_url_score(url)
+        if text:
+            for term in terms:
+                if term in text or text in term:
+                    score += 160
+                    break
+        if score > best_score and score >= 100:
+            best_score = score
+            best_url = url
+    return best_url
+
+
+def event_evidence_quotes(event: Any) -> list[str]:
+    quotes: list[str] = []
+    for evidence in getattr(event, "evidence", []):
+        quote = str(getattr(evidence, "quote", "") or "").strip()
+        if len(quote) >= 6:
+            quotes.append(quote)
+    return list(dict.fromkeys(quotes))
+
+
+def event_match_terms(event: Any) -> list[str]:
+    terms: list[str] = []
+    for field in ("title", "project_name", "address"):
+        value = str(getattr(event, field, "") or "").strip()
+        if len(value) >= 6:
+            terms.append(value)
+    summary = str(getattr(event, "summary", "") or "").strip()
+    if len(summary) >= 10:
+        terms.append(summary[:120])
+    return list(dict.fromkeys(terms))
+
+
+def unique_public_urls(urls: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        if not is_public_http_url(url):
+            continue
+        normalized = url.strip()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
+
+
+def is_public_http_url(url: Any) -> bool:
+    return isinstance(url, str) and url.strip().startswith(("http://", "https://"))
+
+
+def normalized_match_text(value: str) -> str:
+    return re.sub(r"\s+", "", html.unescape(value or "")).lower()
+
+
+def detail_url_score(url: str) -> int:
+    if not is_public_http_url(url):
+        return -100
+    parsed = urllib.parse.urlparse(url)
+    path = urllib.parse.unquote(parsed.path or "").lower()
+    query = (parsed.query or "").lower()
+    basename = path.rstrip("/").rsplit("/", 1)[-1]
+    score = 0
+    if any(ext in path for ext in COMMON_ATTACHMENT_TYPES):
+        score += 70
+    if path.endswith((".html", ".htm", ".shtml")) and basename not in LIST_PAGE_BASENAMES:
+        score += 55
+    if any(token in path for token in DETAIL_URL_TOKENS):
+        score += 25
+    if re.search(r"(^|[?&])(id|guid|uuid|infoid|articleid|contentid|noticeid|rowguid)=", query):
+        score += 35
+    elif query:
+        score += 10
+    if is_likely_directory_url(url):
+        score -= 90
+    return score
+
+
+LIST_PAGE_BASENAMES = {
+    "",
+    "index.html",
+    "index.htm",
+    "default.html",
+    "default.htm",
+    "list.html",
+    "list.htm",
+    "lists.html",
+    "more.html",
+    "index.shtml",
+}
+
+LIST_URL_TOKENS = (
+    "/list",
+    "list_",
+    "_list",
+    "catalog",
+    "category",
+    "channel",
+    "column",
+)
+
+DETAIL_URL_TOKENS = (
+    "detail",
+    "content",
+    "article",
+    "notice",
+    "gonggao",
+    "view",
+    "info",
+    "show",
+)
+
+
+def is_likely_directory_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    path = urllib.parse.unquote(parsed.path or "").lower()
+    basename = path.rstrip("/").rsplit("/", 1)[-1]
+    if not path or path.endswith("/"):
+        return True
+    if basename in LIST_PAGE_BASENAMES:
+        return True
+    if any(token in path for token in LIST_URL_TOKENS):
+        return True
+    return False
 
 
 def output_file_links(state: LandScoutAgentState) -> list[dict[str, str]]:
@@ -353,8 +559,10 @@ def build_dashboard_html(registry: SourceRegistry) -> str:
     source_limit_default = min(12, source_limit_max)
     app_name = html.escape(PRODUCT_DISPLAY_NAME)
     tagline = html.escape(PRODUCT_TAGLINE)
-    key_state = "已配置 OpenAI Key" if settings.openai_api_key else "未配置 OpenAI Key"
-    amap_state = "已配置后端 AMap Key" if settings.amap_key else "未配置后端 AMap Key"
+    openai_key_configured = bool(settings.openai_api_key.strip())
+    amap_key_configured = bool(settings.amap_key.strip())
+    key_state = "已配置 OpenAI Key" if openai_key_configured else "未配置 OpenAI Key"
+    amap_state = "已配置 AMap Key" if amap_key_configured else "未配置 AMap Key"
     logo_html = (
         '<img class="brand-logo" src="/assets/landscout-agent-icon.png" alt="" aria-hidden="true">'
         if brand_logo_path()
@@ -365,6 +573,10 @@ def build_dashboard_html(registry: SourceRegistry) -> str:
     html_text = html_text.replace("__TAGLINE__", tagline)
     html_text = html_text.replace("__KEY_STATE__", html.escape(key_state))
     html_text = html_text.replace("__AMAP_STATE__", html.escape(amap_state))
+    html_text = html_text.replace("__OPENAI_KEY_LIGHT_CLASS__", "ok" if openai_key_configured else "missing")
+    html_text = html_text.replace("__AMAP_KEY_LIGHT_CLASS__", "ok" if amap_key_configured else "missing")
+    html_text = html_text.replace("__OPENAI_KEY_CONFIGURED__", json.dumps(openai_key_configured))
+    html_text = html_text.replace("__AMAP_KEY_CONFIGURED__", json.dumps(amap_key_configured))
     html_text = html_text.replace("__LOGO_HTML__", logo_html)
     html_text = html_text.replace("__SOURCES_JSON__", sources_json.replace("</", "<\\/"))
     html_text = html_text.replace("__SOURCE_LIMIT_MAX__", str(source_limit_max))
@@ -396,7 +608,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     button,input,select,textarea{font:inherit;letter-spacing:0}
     .topbar{min-height:72px;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:14px 28px;border-bottom:1px solid var(--line);background:#fff}
     .brand-block{display:flex;align-items:center;gap:12px;min-width:0}.brand-logo{width:44px;height:44px;border-radius:10px;object-fit:cover;border:1px solid #e4e7ec;box-shadow:0 1px 3px rgba(16,24,40,.12);flex:0 0 auto}.brand-copy{min-width:0}
-    .brand{font-weight:700;font-size:18px;color:#111827}.tag{font-size:12px;color:var(--muted);margin-top:4px}.key{font-size:12px;color:var(--muted);white-space:nowrap;text-align:right;line-height:1.6}
+    .brand{font-weight:700;font-size:18px;color:#111827}.tag{font-size:12px;color:var(--muted);margin-top:4px}.key-status{font-size:12px;color:var(--muted);white-space:nowrap;text-align:right;display:grid;gap:5px}.key-line{display:flex;align-items:center;justify-content:flex-end;gap:7px;line-height:1.35}.key-light{width:9px;height:9px;border-radius:50%;background:var(--red);box-shadow:0 0 0 4px #fee4e2;flex:0 0 auto}.key-light.ok{background:var(--green);box-shadow:0 0 0 4px #e7f7f2}.key-light.missing{background:var(--red);box-shadow:0 0 0 4px #fee4e2}
     .shell{display:grid;grid-template-columns:420px minmax(0,1fr);grid-template-rows:104px minmax(360px,auto) var(--dashboard-focus-row,auto) minmax(118px,auto) minmax(118px,auto) minmax(118px,auto);column-gap:16px;row-gap:12px;max-width:1680px;margin:0 auto;padding:16px;align-items:stretch}
     .panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:16px;box-shadow:0 1px 2px rgba(16,24,40,.04)}.controls,.results{display:contents}
     .controls>.panel:nth-child(1){grid-column:1;grid-row:1 / span 2}.controls>.panel:nth-child(2){grid-column:1;grid-row:3;min-height:0;display:flex;flex-direction:column}.controls>.panel:nth-child(3){grid-column:1;grid-row:4 / span 3}
@@ -416,17 +628,20 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     .progress-block{display:grid;gap:8px}.progress-track{height:12px;background:#e3eaf2;border:1px solid #d8e1ec;border-radius:999px;overflow:hidden;position:relative;box-shadow:inset 0 1px 2px rgba(16,24,40,.08)}.progress-fill{height:100%;width:0%;border-radius:999px;background:#98a2b3;transition:width .45s ease,background .2s ease}.progress-fill.running{background:linear-gradient(90deg,var(--blue),var(--teal));position:relative}.progress-fill.running:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.46),transparent);animation:progress-shine 1.5s linear infinite}.progress-fill.done{background:var(--green)}.progress-fill.error{background:var(--red)}.progress-meta{display:flex;justify-content:space-between;gap:16px;font-size:12px;color:var(--muted);line-height:1.45}.progress-meta span:last-child{font-weight:700;color:#475467}@keyframes progress-shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
     .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:8px}.metric{border:1px solid #e4e7ec;border-radius:8px;background:#f8fafc;padding:10px}.metric strong{display:flex;align-items:center;gap:6px;font-size:20px}.metric span{font-size:12px;color:var(--muted)}
     .map-panel{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:0}.map-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #e4e7ec;flex:0 0 auto}.map-title{font-size:15px;font-weight:700;line-height:1.2;display:flex;align-items:center;gap:8px}.map-sub{font-size:12px;color:var(--muted);margin-top:5px}.map-sub:empty{display:none}.map-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.map-tools input{width:190px;min-height:32px;font-size:12px}.map-tools button{min-height:32px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#344054;padding:6px 9px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px}
-    #opportunityMap{height:auto;min-height:0;flex:1;position:relative;background:#dfe7ef;overflow:hidden}.map-placeholder{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),#dfe7ef;background-size:54px 54px;color:#334155}.map-placeholder:before{content:"上海坐标示意图";position:absolute;left:18px;top:16px;font-size:13px;font-weight:700;color:#334155}.map-placeholder:after{content:"输入高德 JS API Key 后显示真实地图";position:absolute;left:18px;top:38px;font-size:12px;color:#667085}.coord-dot{position:absolute;border:2px solid rgba(29,78,216,.82);background:rgba(29,78,216,.20);border-radius:50%;transform:translate(-50%,-50%);display:grid;place-items:center;color:#0f172a;font-size:12px;font-weight:700}.coord-label{position:absolute;transform:translate(12px,-50%);background:rgba(255,255,255,.92);border:1px solid #d7dee8;border-radius:6px;padding:5px 7px;font-size:12px;white-space:nowrap;box-shadow:0 1px 2px rgba(16,24,40,.08)}.legend{position:absolute;right:12px;bottom:12px;background:rgba(255,255,255,.94);border:1px solid #d7dee8;border-radius:6px;padding:8px 10px;font-size:12px;color:#344054}
+    #opportunityMap{height:auto;min-height:0;flex:1;position:relative;background:#dfe7ef;overflow:hidden}.map-placeholder{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),#dfe7ef;background-size:54px 54px;color:#334155}.map-placeholder:before{content:"上海坐标示意图";position:absolute;left:18px;top:16px;font-size:13px;font-weight:700;color:#334155}.map-placeholder:after{content:"输入高德 JS API Key 后显示真实地图";position:absolute;left:18px;top:38px;font-size:12px;color:#667085}.coord-dot{position:absolute;border:2px solid rgba(29,78,216,.82);background:rgba(29,78,216,.20);border-radius:50%;transform:translate(-50%,-50%);display:grid;place-items:center;color:#0f172a;font-size:12px;font-weight:700;cursor:pointer;padding:0;appearance:none}.coord-dot:focus-visible{outline:2px solid #84adff;outline-offset:2px}.coord-label{position:absolute;transform:translate(12px,-50%);background:rgba(255,255,255,.92);border:1px solid #d7dee8;border-radius:6px;padding:5px 7px;font-size:12px;white-space:nowrap;box-shadow:0 1px 2px rgba(16,24,40,.08);cursor:pointer}.coord-label:hover{background:#fff}.legend{position:absolute;right:12px;bottom:12px;background:rgba(255,255,255,.94);border:1px solid #d7dee8;border-radius:6px;padding:8px 10px;font-size:12px;color:#344054}
     #areasPanel,#filesPanel{min-height:118px}.areas{display:grid;gap:10px}.area{border-top:1px solid #eef2f6;padding-top:12px}.area:first-child{border-top:0;padding-top:0}.area-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.area-title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px}.badge{font-size:12px;color:#0f5132;background:#ecfdf3;border:1px solid #abefc6;border-radius:999px;padding:3px 8px;white-space:nowrap}
     .scoreline{display:grid;grid-template-columns:110px 1fr 58px;gap:8px;align-items:center;margin:10px 0}.bar{height:9px;background:#e7edf3;border-radius:999px;overflow:hidden}.fill{height:100%;background:var(--blue);border-radius:999px}.small{font-size:12px;color:var(--muted);line-height:1.55}.coord-text{margin-top:2px}.reason{font-size:12px;line-height:1.55;color:#344054;margin-top:8px}.signal-links{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.signal-link{font-size:12px;text-decoration:none;color:#1849a9;border:1px solid #b2ccff;background:#eff4ff;border-radius:999px;padding:5px 9px;display:inline-flex;align-items:center;gap:5px;line-height:1.2}.signal-link:hover{background:#dbeafe;border-color:#84adff}.risk{color:#7c2d12}.file-groups{display:grid;gap:14px}.file-group-title{font-size:12px;font-weight:700;color:#475467;margin-bottom:8px}.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:8px}.file{min-height:38px;font-size:12px;text-decoration:none;color:#1849a9;border:1px solid #b2ccff;background:#eff4ff;border-radius:6px;padding:7px 10px;display:flex;align-items:center;gap:6px;justify-content:flex-start}
     .errors{display:grid;gap:6px}.error-row{font-size:12px;color:#7a271a;background:#fff7ed;border:1px solid #fed7aa;border-radius:6px;padding:8px;overflow-wrap:anywhere;display:flex;align-items:flex-start;gap:6px}.empty{font-size:13px;color:var(--muted);padding:18px 0}
-    @media(max-width:980px){.shell{grid-template-columns:1fr;grid-template-rows:auto}.controls,.results{display:grid;gap:12px}.controls>.panel,.results>.panel{grid-column:auto!important;grid-row:auto!important}.controls>.panel:last-child .source-list{max-height:260px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.topbar{height:auto;align-items:flex-start;padding:14px 16px;flex-direction:column}.key{white-space:normal}}
+    @media(max-width:980px){.shell{grid-template-columns:1fr;grid-template-rows:auto}.controls,.results{display:grid;gap:12px}.controls>.panel,.results>.panel{grid-column:auto!important;grid-row:auto!important}.controls>.panel:last-child .source-list{max-height:260px}.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.topbar{height:auto;align-items:flex-start;padding:14px 16px;flex-direction:column}.key-status{white-space:normal;text-align:left}.key-line{justify-content:flex-start}}
   </style>
 </head>
 <body>
   <header class="topbar">
     <div class="brand-block">__LOGO_HTML__<div class="brand-copy"><div class="brand">__APP_NAME__</div><div class="tag">__TAGLINE__</div></div></div>
-    <div class="key">__KEY_STATE__<br>__AMAP_STATE__</div>
+    <div class="key-status" aria-label="API Key 配置状态">
+      <div class="key-line"><span id="openaiKeyLight" class="key-light __OPENAI_KEY_LIGHT_CLASS__"></span><span id="openaiKeyState">__KEY_STATE__</span></div>
+      <div class="key-line"><span id="amapKeyLight" class="key-light __AMAP_KEY_LIGHT_CLASS__"></span><span id="amapKeyState">__AMAP_STATE__</span></div>
+    </div>
   </header>
   <main class="shell">
     <section class="controls">
@@ -506,6 +721,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
             <div id="mapSub" class="map-sub"></div>
           </div>
           <div class="map-tools">
+            <button id="viewAllMapBtn" type="button"><span data-icon="target"></span>查看全部</button>
             <button id="refreshMapBtn" type="button"><span data-icon="refresh"></span>刷新地图</button>
           </div>
         </div>
@@ -547,14 +763,22 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     const shell = document.querySelector(".shell");
     const mapPanel = document.querySelector(".map-panel");
     const mapSub = document.getElementById("mapSub");
+    const viewAllMapBtn = document.getElementById("viewAllMapBtn");
     const refreshMapBtn = document.getElementById("refreshMapBtn");
     const openaiKeyInput = document.getElementById("openaiKey");
     const amapKeyInput = document.getElementById("amapKey");
     const amapSecurityCodeInput = document.getElementById("amapSecurityCode");
+    const openaiKeyLight = document.getElementById("openaiKeyLight");
+    const amapKeyLight = document.getElementById("amapKeyLight");
+    const openaiKeyState = document.getElementById("openaiKeyState");
+    const amapKeyState = document.getElementById("amapKeyState");
     let lastAreas = [];
     let amapInstance = null;
     let amapScriptKey = "";
     let amapLoading = null;
+    let amapAllOverlays = [];
+    let amapAreaInfo = [];
+    let amapLocatedAreas = [];
     let progressTimer = null;
     let pollTimer = null;
     let progressValue = 0;
@@ -563,6 +787,8 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     let customSourcesUserAdjusted = false;
     const TASK_STORAGE_KEY = "landscout.currentTaskId.v2";
     const MAX_TRANSIENT_POLL_FAILURES = 18;
+    const SERVER_OPENAI_KEY_CONFIGURED = __OPENAI_KEY_CONFIGURED__;
+    const SERVER_AMAP_KEY_CONFIGURED = __AMAP_KEY_CONFIGURED__;
     const ICONS = {
       alert: '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.7 2.4 17.4A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.6L13.7 3.7a2 2 0 0 0-3.4 0Z"/>',
       building: '<path d="M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M16 8h2a2 2 0 0 1 2 2v11"/><path d="M8 7h4"/><path d="M8 11h4"/><path d="M8 15h4"/><path d="M9 21v-3h2v3"/>',
@@ -612,6 +838,20 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
           button.innerHTML = icon(shouldHide ? "eye" : "eyeOff");
         });
       });
+    }
+    function setKeyStatus(light, label, configured, configuredText, missingText){
+      if(light){
+        light.className = `key-light ${configured ? "ok" : "missing"}`;
+      }
+      if(label){
+        label.textContent = configured ? configuredText : missingText;
+      }
+    }
+    function updateKeyStatusLights(){
+      const hasOpenAI = SERVER_OPENAI_KEY_CONFIGURED || Boolean(openaiKeyInput.value.trim());
+      const hasAmap = SERVER_AMAP_KEY_CONFIGURED || Boolean(amapKeyInput.value.trim());
+      setKeyStatus(openaiKeyLight, openaiKeyState, hasOpenAI, "已配置 OpenAI Key", "未配置 OpenAI Key");
+      setKeyStatus(amapKeyLight, amapKeyState, hasAmap, "已配置 AMap Key", "未配置 AMap Key");
     }
     function setStatus(state, text){
       statusDot.className = "dot " + state;
@@ -865,6 +1105,9 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         amapInstance.destroy();
         amapInstance = null;
       }
+      amapLocatedAreas = areas;
+      amapAllOverlays = [];
+      amapAreaInfo = [];
       mapContainer.innerHTML = "";
       amapInstance = new AMap.Map("opportunityMap", {
         center: [121.4737, 31.2304],
@@ -898,29 +1141,89 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
           content: `<div style="font-size:13px;line-height:1.55"><strong>${escapeHtml(area.name)}</strong><br>住宅开发分 ${escapeHtml(Number(area.score || 0).toFixed(2))}<br>坐标 ${escapeHtml(formatCoordinate(area))}<br>${escapeHtml(area.recommendation || "")}</div>`,
           offset: new AMap.Pixel(0, -18),
         });
-        circle.on("click", () => info.open(amapInstance, center));
-        marker.on("click", () => info.open(amapInstance, center));
+        circle.on("click", () => focusMapAreaByIndex(idx));
+        marker.on("click", () => focusMapAreaByIndex(idx));
         amapInstance.add([circle, marker]);
         overlays.push(circle, marker);
+        amapAreaInfo.push({ info, center, area });
       });
+      amapAllOverlays = overlays;
       if(overlays.length){
-        amapInstance.setFitView(overlays, false, [64, 64, 64, 64], 14);
+        showAllAmapAreas();
       }
-      mapSub.textContent = `已绘制 ${areas.length} 个候选区域半透明覆盖圆。`;
     }
-    function renderCoordinateFallback(areas, note){
+    function focusZoomForArea(area){
+      const radius = Math.max(800, Math.min(12000, Number(area.radius_m || 5000)));
+      if(radius <= 2500){ return 14; }
+      if(radius <= 6500){ return 13; }
+      return 12;
+    }
+    function focusMapAreaByIndex(index){
+      const area = locatedAreas(lastAreas)[index];
+      if(!area){
+        return;
+      }
+      if(amapInstance && window.AMap && amapAreaInfo[index]){
+        const item = amapAreaInfo[index];
+        const center = item.center || [Number(area.lon), Number(area.lat)];
+        amapInstance.setZoomAndCenter(focusZoomForArea(area), center, true, 450);
+        window.setTimeout(() => item.info.open(amapInstance, center), 180);
+        mapSub.textContent = `已聚焦 ${area.name}，点击“查看全部”返回总览。`;
+        return;
+      }
+      renderCoordinateFallback(locatedAreas(lastAreas), `已聚焦 ${area.name}；点击“查看全部”返回总览。`, index);
+    }
+    function showAllAmapAreas(){
+      if(amapInstance && amapAllOverlays.length){
+        amapInstance.setFitView(amapAllOverlays, false, [64, 64, 64, 64], 14);
+        mapSub.textContent = `已绘制 ${amapLocatedAreas.length} 个候选区域半透明覆盖圆。`;
+      }
+    }
+    function showAllMapAreas(){
+      const located = locatedAreas(lastAreas);
+      if(!located.length){
+        return;
+      }
+      if(amapInstance && window.AMap && amapAllOverlays.length){
+        showAllAmapAreas();
+        return;
+      }
+      renderCoordinateFallback(located);
+    }
+    function fallbackBounds(areas, focusIndex = -1){
+      if(focusIndex >= 0 && areas[focusIndex]){
+        const area = areas[focusIndex];
+        const lon = Number(area.lon);
+        const lat = Number(area.lat);
+        if(Number.isFinite(lon) && Number.isFinite(lat)){
+          const radiusDegrees = Math.max(0.035, Math.min(0.18, Number(area.radius_m || 5000) / 111000 * 1.8));
+          return {
+            minLon: lon - radiusDegrees * 1.45,
+            maxLon: lon + radiusDegrees * 1.45,
+            minLat: lat - radiusDegrees,
+            maxLat: lat + radiusDegrees,
+          };
+        }
+      }
+      return { minLon: 120.75, maxLon: 122.15, minLat: 30.62, maxLat: 31.88 };
+    }
+    function renderCoordinateFallback(areas, note, focusIndex = -1){
       if(amapInstance){
         amapInstance.destroy();
         amapInstance = null;
       }
-      const bounds = { minLon: 120.75, maxLon: 122.15, minLat: 30.62, maxLat: 31.88 };
+      amapAllOverlays = [];
+      amapAreaInfo = [];
+      amapLocatedAreas = [];
+      const bounds = fallbackBounds(areas, focusIndex);
       const points = areas.map((area, idx) => {
         const lon = Number(area.lon);
         const lat = Number(area.lat);
         const x = Math.max(4, Math.min(96, ((lon - bounds.minLon) / (bounds.maxLon - bounds.minLon)) * 100));
         const y = Math.max(5, Math.min(95, ((bounds.maxLat - lat) / (bounds.maxLat - bounds.minLat)) * 100));
         const size = Math.max(42, Math.min(150, Number(area.radius_m || 5000) / 65));
-        return `<div class="coord-dot" title="${escapeHtml(area.name)}" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px">${idx + 1}</div><div class="coord-label" style="left:${x}%;top:${y}%">${escapeHtml(area.name)} · ${escapeHtml(formatCoordinate(area))}</div>`;
+        const active = idx === focusIndex ? "box-shadow:0 0 0 4px rgba(29,78,216,.22);" : "";
+        return `<button class="coord-dot" type="button" data-fallback-focus="${idx}" title="${escapeHtml(area.name)}" style="left:${x}%;top:${y}%;width:${size}px;height:${size}px;${active}">${idx + 1}</button><div class="coord-label" data-fallback-focus="${idx}" style="left:${x}%;top:${y}%">${escapeHtml(area.name)} · ${escapeHtml(formatCoordinate(area))}</div>`;
       }).join("");
       mapContainer.innerHTML = `<div class="map-placeholder">${points}<div class="legend">${escapeHtml(note || "坐标为候选区中心点；圆半径来自评分候选区。")}</div></div>`;
       mapSub.textContent = `已绘制 ${areas.length} 个候选区域坐标覆盖圆。`;
@@ -1087,6 +1390,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         openai_api_key: openaiKeyInput.value.trim(),
         amap_key: amapKeyInput.value.trim(),
       };
+      updateKeyStatusLights();
       runBtn.disabled = true;
       stopPolling();
       clearActiveTask();
@@ -1114,8 +1418,21 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     }
     sourceLimit.addEventListener("input", renderSources);
     useBuiltin.addEventListener("change", renderSources);
+    openaiKeyInput.addEventListener("input", updateKeyStatusLights);
+    amapKeyInput.addEventListener("input", updateKeyStatusLights);
     runBtn.addEventListener("click", runSearch);
+    viewAllMapBtn.addEventListener("click", showAllMapAreas);
     refreshMapBtn.addEventListener("click", () => renderOpportunityMap(lastAreas));
+    mapContainer.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-fallback-focus]");
+      if(!target){
+        return;
+      }
+      const index = Number(target.getAttribute("data-fallback-focus"));
+      if(Number.isFinite(index)){
+        focusMapAreaByIndex(index);
+      }
+    });
     customSourcesInput.addEventListener("pointerdown", (event) => {
       const rect = customSourcesInput.getBoundingClientRect();
       if(event.clientX >= rect.right - 28 && event.clientY >= rect.bottom - 28){
@@ -1128,6 +1445,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     window.addEventListener("resize", () => window.requestAnimationFrame(alignDashboardLayout));
     hydrateStaticIcons();
     setupSecretToggles();
+    updateKeyStatusLights();
     window.scrollTo(0, 0);
     alignDashboardLayout();
     renderSources();

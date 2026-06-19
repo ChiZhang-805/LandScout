@@ -7,6 +7,7 @@ from app import main
 from app.core.config import effective_openai_api_key, settings
 from app.llm.schemas import Evidence, EventType, GovernmentEvent
 from app.main import app
+from app.parsers.models import ParsedDocument
 from app.pipeline.orchestrator import LandScoutAgentState
 from app.scoring.candidates import CandidateArea
 from app.scoring.residential import ResidentialCandidateScore
@@ -25,6 +26,40 @@ def wait_for_task(client: TestClient, task_id: str, timeout: float = 15.0) -> di
             return payload
         time.sleep(0.05)
     raise AssertionError(f"Task {task_id} did not finish within {timeout} seconds")
+
+
+def make_web_candidate_score(event_id: str = "event1") -> ResidentialCandidateScore:
+    return ResidentialCandidateScore(
+        area=CandidateArea(
+            id="area1",
+            name="Test Area",
+            lat=31.2912,
+            lon=121.1663,
+            description="Test area",
+        ),
+        future_population_inflow_score=20,
+        pre_inflow_signal_score=30,
+        land_grab_window_score=10,
+        demand_driver_score=10,
+        transport_public_service_score=0,
+        residential_land_access_score=0,
+        market_entry_score=0,
+        recency_score=50,
+        evidence_confidence_score=80,
+        residential_supply_pressure=0,
+        maturity_penalty=0,
+        geo_uncertainty_penalty=0,
+        residential_development_score=25,
+        opportunity_score=25,
+        confidence=0.8,
+        evidence_count=1,
+        evidence_event_ids=[event_id],
+        recommendation="watch",
+        next_action="watch",
+        suggested_product="monitor",
+        key_reasons=["planning signal"],
+        major_risks=["not shown in web candidate cards"],
+    )
 
 
 def test_parse_custom_sources_text_accepts_line_format():
@@ -96,6 +131,9 @@ def test_web_dashboard_renders_without_auto_running_pipeline():
     assert 'id="openaiKey"' in response.text
     assert 'id="amapKey"' in response.text
     assert 'id="opportunityMap"' in response.text
+    assert 'id="openaiKeyLight"' in response.text
+    assert 'id="amapKeyLight"' in response.text
+    assert 'id="viewAllMapBtn"' in response.text
     assert 'class="brand-logo"' in response.text
     assert '<input id="openaiKey" type="password"' in response.text
     assert '<input id="amapKey" type="password"' in response.text
@@ -108,6 +146,11 @@ def test_web_dashboard_renders_without_auto_running_pipeline():
     assert "function resetExpiredTask(taskId)" in response.text
     assert 'function pollTask(taskId)' in response.text
     assert "function setupSecretToggles()" in response.text
+    assert "function updateKeyStatusLights()" in response.text
+    assert "function focusMapAreaByIndex(index)" in response.text
+    assert "function showAllMapAreas()" in response.text
+    assert "const SERVER_OPENAI_KEY_CONFIGURED =" in response.text
+    assert "const SERVER_AMAP_KEY_CONFIGURED =" in response.text
     assert "异常/访问限制" not in response.text
     source_limit_max = len(main.registry.sources)
     source_limit_default = min(12, source_limit_max)
@@ -427,3 +470,83 @@ def test_web_response_adds_public_signal_links_to_candidate_areas():
             "url": "https://example.gov.cn/planning/detail.html",
         }
     ]
+
+
+def test_web_response_prefers_matching_detail_link_from_directory_document():
+    event = GovernmentEvent(
+        id="event1",
+        source_id="planning",
+        source_url="https://example.gov.cn/ghgs/",
+        event_type=EventType.PLANNING_POLICY,
+        title="Specific planning notice",
+        lat=31.2912,
+        lon=121.1663,
+        evidence=[
+            Evidence(
+                source_id="planning",
+                url="https://example.gov.cn/ghgs/",
+                quote="Specific planning notice",
+            )
+        ],
+    )
+    parsed = ParsedDocument(
+        source_id="planning",
+        url="https://example.gov.cn/ghgs/",
+        title="Planning notice list",
+        text="Specific planning notice\nOther notice",
+        links=[
+            {
+                "url": "https://example.gov.cn/ghgs/2026/specific-planning-notice.html",
+                "text": "Specific planning notice",
+            }
+        ],
+    )
+
+    payload = state_to_web_response(
+        LandScoutAgentState(
+            run_id="run",
+            parsed_documents=[parsed],
+            events=[event],
+            residential_scores=[make_web_candidate_score()],
+        )
+    )
+
+    assert payload["top_areas"][0]["signal_links"][0]["url"] == (
+        "https://example.gov.cn/ghgs/2026/specific-planning-notice.html"
+    )
+
+
+def test_web_response_prefers_evidence_detail_url_over_matching_directory_document():
+    event = GovernmentEvent(
+        id="event1",
+        source_id="planning",
+        source_url="https://example.gov.cn/ghgs/",
+        event_type=EventType.PLANNING_POLICY,
+        title="Specific planning notice",
+        evidence=[
+            Evidence(
+                source_id="planning",
+                url="https://example.gov.cn/ghgs/2026/specific-planning-notice.html",
+                quote="Specific planning notice",
+            )
+        ],
+    )
+    parsed = ParsedDocument(
+        source_id="planning",
+        url="https://example.gov.cn/ghgs/",
+        title="Planning notice list",
+        text="Specific planning notice",
+    )
+
+    payload = state_to_web_response(
+        LandScoutAgentState(
+            run_id="run",
+            parsed_documents=[parsed],
+            events=[event],
+            residential_scores=[make_web_candidate_score()],
+        )
+    )
+
+    assert payload["top_areas"][0]["signal_links"][0]["url"] == (
+        "https://example.gov.cn/ghgs/2026/specific-planning-notice.html"
+    )
