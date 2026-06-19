@@ -634,7 +634,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
       const focusRowHeight = Math.max(panelChromeHeight + minimumEditorHeight, requestedFocusRowHeight);
       shell.style.setProperty("--dashboard-focus-row", `${focusRowHeight}px`);
       const editorHeight = Math.max(minimumEditorHeight, focusRowHeight - panelChromeHeight);
-      customSourcesInput.style.minHeight = "0";
+      customSourcesInput.style.minHeight = `${editorHeight}px`;
       customSourcesInput.style.height = `${editorHeight}px`;
     }
     function alignDashboardLayout(){
