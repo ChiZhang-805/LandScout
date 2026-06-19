@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 
 
 CONNECTION_ERROR_NAMES = {
@@ -93,7 +93,7 @@ def summarize_openai_error(exc: Exception) -> str:
     status_code = openai_status_code(exc)
     message = str(exc)
     if status_code == 401 or "invalid_api_key" in message or "Incorrect API key" in message:
-        return "OpenAI API Key 无效或已被撤销；请更新 .env 中的 OPENAI_API_KEY 后重启服务。"
+        return "OpenAI API Key 无效或已被撤销；请更新 OpenAI API Key 后重试。"
     if status_code == 403:
         return "OpenAI API Key 没有当前模型或接口权限；请检查项目权限、模型权限和账单状态。"
     if status_code == 404:
@@ -121,11 +121,12 @@ def build_openai_client():
     except Exception as exc:
         raise RuntimeError(f"OpenAI client is not installed: {exc}") from exc
 
-    direct_client = OpenAI(api_key=settings.openai_api_key)
+    api_key = effective_openai_api_key()
+    direct_client = OpenAI(api_key=api_key)
     if not settings.openai_proxy:
         return direct_client
     proxy_client = OpenAI(
-        api_key=settings.openai_api_key,
+        api_key=api_key,
         http_client=DefaultHttpxClient(proxy=settings.openai_proxy),
     )
     return OpenAIProxyFallbackClient(direct_client, proxy_client)

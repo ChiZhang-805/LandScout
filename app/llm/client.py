@@ -4,7 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.core.utils import short_text
 from app.llm.normalization import normalize_date, parse_amount_wanyuan, parse_area_sqm
 from app.llm.openai_client import build_openai_client
@@ -30,10 +30,10 @@ class LLMExtractor:
 
     def extract(self, document: ParsedDocument) -> GovernmentSignalExtraction:
         if self.live:
-            if not settings.openai_api_key:
+            if not effective_openai_api_key():
                 raise MissingLLMKey(
                     "OPENAI_API_KEY is required for live LLM extraction. "
-                    "Set it in .env or run fixture tests without --live."
+                    "Set it in .env, fill OpenAI API Key in the web page, or run fixture tests without --live."
                 )
             return self._extract_openai(document)
         if not self.allow_heuristic:

@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.llm.openai_client import build_openai_client
 from app.llm.schemas import GovernmentEvent
 from app.scoring.residential import ResidentialCandidateScore
@@ -52,7 +52,7 @@ def generate_investment_memo(
     *,
     use_openai: bool,
 ) -> InvestmentMemo:
-    if use_openai and settings.openai_api_key and scores:
+    if use_openai and effective_openai_api_key() and scores:
         try:
             return generate_investment_memo_openai(scores, events)
         except Exception:

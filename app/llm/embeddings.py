@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.core.utils import short_text, write_json
 from app.llm.openai_client import build_openai_client
 from app.llm.schemas import GovernmentEvent
@@ -83,7 +83,8 @@ def write_embedding_index(
 ) -> Path:
     records = build_embedding_records(parsed_documents, events)
     embedding_error = ""
-    if use_openai and settings.openai_api_key and records:
+    has_openai_key = bool(effective_openai_api_key())
+    if use_openai and has_openai_key and records:
         try:
             embed_records(records)
         except Exception as exc:
@@ -91,7 +92,7 @@ def write_embedding_index(
     write_json(
         path,
         {
-            "model": settings.openai_embedding_model if use_openai and settings.openai_api_key else "",
+            "model": settings.openai_embedding_model if use_openai and has_openai_key else "",
             "record_count": len(records),
             "embedding_status": embedding_status(records),
             "embedding_error": embedding_error,

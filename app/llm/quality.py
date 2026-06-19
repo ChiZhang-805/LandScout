@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.core.utils import write_json
 from app.llm.openai_client import build_openai_client
 from app.llm.schemas import GovernmentEvent
@@ -49,7 +49,7 @@ def generate_quality_review(
     *,
     use_openai: bool,
 ) -> QualityReview:
-    if use_openai and settings.openai_api_key and scores:
+    if use_openai and effective_openai_api_key() and scores:
         try:
             return generate_quality_review_openai(scores, events)
         except Exception:

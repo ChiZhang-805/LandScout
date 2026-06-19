@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 import os
 from pathlib import Path
 
@@ -39,3 +42,24 @@ class Settings(BaseModel):
 
 
 settings = Settings()
+
+
+_request_openai_api_key: ContextVar[str | None] = ContextVar(
+    "request_openai_api_key",
+    default=None,
+)
+
+
+def effective_openai_api_key() -> str:
+    return (_request_openai_api_key.get() or settings.openai_api_key).strip()
+
+
+@contextmanager
+def use_request_openai_api_key(api_key: str | None) -> Iterator[None]:
+    cleaned = (api_key or "").strip()
+    token = _request_openai_api_key.set(cleaned) if cleaned else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _request_openai_api_key.reset(token)

@@ -145,13 +145,13 @@ http://127.0.0.1:8000
 }
 ```
 
-选择“公开网站抓取”时仍需要 `OPENAI_API_KEY`；选择“演示数据”时不需要。
+选择“公开网站抓取”时仍需要 OpenAI API Key；可以在网页左侧临时填写，也可以由服务端 `.env` / Render 环境变量提供。选择“演示数据”时不需要。
 
 ## Render 公开部署
 
-仓库根目录已经包含 `render.yaml`，可在 Render 里作为 Blueprint 或 Python Web Service 部署。默认公开网页可以打开并运行“演示数据”；如果要在 Render 上跑“公开网站抓取”，需要在 Render 服务的 Environment 里配置：
+仓库根目录已经包含 `render.yaml`，可在 Render 里作为 Blueprint 或 Python Web Service 部署。默认公开网页可以打开并运行“演示数据”。如果要在 Render 上跑“公开网站抓取”，用户可以在网页左侧填写 OpenAI API Key；也可以在 Render 服务的 Environment 里配置服务端默认 Key：
 
-- `OPENAI_API_KEY`：真实抓取后的 LLM 分析必需。
+- `OPENAI_API_KEY`：可选。配置后作为服务端默认 Key；不配置时，用户仍可在网页里临时填写。
 - `OPENAI_MODEL` / `OPENAI_FAST_MODEL` / `OPENAI_EMBEDDING_MODEL`：可选，不填时使用默认模型。
 - `AMAP_KEY`：可选；不填时仍可在网页输入高德 Key，或使用内置上海 gazetteer fallback。
 - `OPENAI_PROXY`：Render 海外环境通常不需要配置。

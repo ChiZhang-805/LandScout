@@ -11,7 +11,7 @@ import httpx
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.core.utils import short_text
 from app.llm.openai_client import build_openai_client
 from app.sources.registry import SourceConfig
@@ -197,7 +197,7 @@ class SourceScoutAgent:
             existing_urls=existing_urls or set(),
             existing_hosts=existing_hosts or set(),
         )
-        if use_llm_queries and settings.openai_api_key and candidates:
+        if use_llm_queries and effective_openai_api_key() and candidates:
             try:
                 candidates = evaluate_candidates_with_llm(candidates, max_sources=max_sources)
             except Exception as exc:
@@ -206,7 +206,7 @@ class SourceScoutAgent:
 
 
 def plan_discovery_queries(*, use_llm: bool = True) -> list[str]:
-    if use_llm and settings.openai_api_key:
+    if use_llm and effective_openai_api_key():
         planned = plan_queries_with_llm()
         if planned:
             return planned

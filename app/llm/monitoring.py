@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.core.utils import write_json
 from app.llm.openai_client import build_openai_client
 from app.llm.schemas import GovernmentEvent
@@ -46,7 +46,7 @@ def generate_monitoring_queries(
     *,
     use_openai: bool,
 ) -> MonitoringPlan:
-    if use_openai and settings.openai_api_key and scores:
+    if use_openai and effective_openai_api_key() and scores:
         try:
             return generate_monitoring_queries_openai(scores, events)
         except Exception:

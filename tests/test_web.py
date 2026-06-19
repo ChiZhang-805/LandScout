@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from app import main
+from app.core.config import effective_openai_api_key, settings
 from app.main import app
 from app.pipeline.orchestrator import LandScoutAgentState
 from app.sources.registry import SourceConfig, SourceRegistry
@@ -73,11 +74,14 @@ def test_web_dashboard_renders_without_auto_running_pipeline():
     assert "尚未运行" in response.text
     assert "/api/recommend-residential" in response.text
     assert 'id="city"' in response.text
+    assert 'id="openaiKey"' in response.text
     assert 'id="amapKey"' in response.text
     assert 'id="opportunityMap"' in response.text
     assert 'class="brand-logo"' in response.text
+    assert '<input id="openaiKey" type="password"' in response.text
     assert '<input id="amapKey" type="password"' in response.text
     assert '<input id="amapSecurityCode" type="password"' in response.text
+    assert 'data-secret-toggle="openaiKey"' in response.text
     assert 'data-secret-toggle="amapKey"' in response.text
     assert 'data-secret-toggle="amapSecurityCode"' in response.text
     assert "function setupSecretToggles()" in response.text
@@ -156,6 +160,36 @@ def test_web_request_passes_amap_key_to_pipeline(monkeypatch):
 
     assert response["run_id"] == "run"
     assert captured["amap_key"] == "amap-test"
+
+
+def test_web_request_uses_request_scoped_openai_key(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(settings, "openai_api_key", "")
+
+    class FakeAgent:
+        def __init__(self, registry=None):  # type: ignore[no-untyped-def]
+            pass
+
+        def recommend_residential(self, **kwargs):  # type: ignore[no-untyped-def]
+            captured["effective_key_during_request"] = effective_openai_api_key()
+            return LandScoutAgentState(run_id="run")
+
+    monkeypatch.setattr(main, "LandScoutAgent", FakeAgent)
+
+    response = main.recommend_residential(
+        WebRunRequest(
+            city="shanghai",
+            live=False,
+            days=540,
+            top_k=2,
+            source_limit=12,
+            openai_api_key="request-openai-key",
+        )
+    )
+
+    assert response["run_id"] == "run"
+    assert captured["effective_key_during_request"] == "request-openai-key"
+    assert effective_openai_api_key() == ""
 
 
 def test_web_live_source_limit_is_capped_to_registry_size(monkeypatch):

@@ -10,7 +10,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.core.utils import content_hash, ensure_dir, read_json, utc_now_iso, write_json
 from app.crawlers.fetcher import PublicFetcher, infer_kind
 from app.crawlers.models import FetchError, FetchRunResult, RawDocument
@@ -53,10 +53,10 @@ class LandScoutAgent:
         self.registry = registry or load_shanghai_registry()
 
     def run_landscout_demo(self, *, live: bool, days: int, top_k: int) -> LandScoutAgentState:
-        if live and not settings.openai_api_key:
+        if live and not effective_openai_api_key():
             raise MissingLLMKey(
                 "OPENAI_API_KEY is required for live LLM extraction. "
-                "Set it in .env before running the LandScout Agent live demo."
+                "Set it in .env or fill OpenAI API Key in the web page before running the LandScout Agent live demo."
             )
         run_id = make_run_id()
         run_dir = run_data_dir(run_id)
@@ -107,10 +107,10 @@ class LandScoutAgent:
         include_non_official_sources: bool = False,
         amap_key: str | None = None,
     ) -> LandScoutAgentState:
-        if live and not settings.openai_api_key:
+        if live and not effective_openai_api_key():
             raise MissingLLMKey(
                 "OPENAI_API_KEY is required for live residential recommendation. "
-                "Set it in .env or run without --live for a fixture-backed demo."
+                "Set it in .env, fill OpenAI API Key in the web page, or run without --live for a fixture-backed demo."
             )
         run_id = make_run_id()
         run_dir = run_data_dir(run_id)

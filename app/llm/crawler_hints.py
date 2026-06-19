@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.core.utils import write_json
 from app.llm.openai_client import build_openai_client
 from app.parsers.models import ParsedDocument
@@ -44,7 +44,7 @@ def write_crawler_hints(
 
 
 def generate_crawler_hints(parsed_documents: list[ParsedDocument], *, use_openai: bool) -> CrawlerHintPlan:
-    if use_openai and settings.openai_api_key and parsed_documents:
+    if use_openai and effective_openai_api_key() and parsed_documents:
         try:
             return generate_crawler_hints_openai(parsed_documents)
         except Exception:

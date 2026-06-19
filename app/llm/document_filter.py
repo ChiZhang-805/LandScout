@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.core.utils import short_text
 from app.llm.client import MissingLLMKey
 from app.llm.openai_client import (
@@ -65,7 +65,7 @@ class DocumentRelevanceFilter:
         if obvious:
             return obvious
         if self.live:
-            if not settings.openai_api_key:
+            if not effective_openai_api_key():
                 raise MissingLLMKey("OPENAI_API_KEY is required for live document relevance filtering.")
             try:
                 return self._classify_openai(document)

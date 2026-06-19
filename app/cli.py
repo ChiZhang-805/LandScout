@@ -7,7 +7,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.table import Table
 
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings
 from app.core.utils import leading_label, short_text
 from app.llm.batch import submit_batch_request_file
 from app.llm.client import MissingLLMKey
@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
             print_outputs(state.outputs)
             return 0
         if args.command == "submit-batch":
-            if not settings.openai_api_key:
+            if not effective_openai_api_key():
                 raise MissingLLMKey("OPENAI_API_KEY is required to submit an OpenAI Batch job.")
             batch_id = submit_batch_request_file(Path(args.batch_file), completion_window=args.completion_window)
             console.print(f"batch_id: {batch_id}")

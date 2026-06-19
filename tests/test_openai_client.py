@@ -1,4 +1,4 @@
-from app.core.config import settings
+from app.core.config import effective_openai_api_key, settings, use_request_openai_api_key
 from app.llm import document_filter as document_filter_module
 from app.llm.document_filter import DocumentRelevanceFilter
 from app.llm.openai_client import OpenAIProxyFallbackClient, build_openai_client
@@ -25,6 +25,15 @@ def test_openai_client_accepts_openai_only_proxy(monkeypatch):
     client = build_openai_client()
 
     assert client is not None
+
+
+def test_request_scoped_openai_key_overrides_settings(monkeypatch):
+    monkeypatch.setattr(settings, "openai_api_key", "")
+
+    assert effective_openai_api_key() == ""
+    with use_request_openai_api_key("request-key"):
+        assert effective_openai_api_key() == "request-key"
+    assert effective_openai_api_key() == ""
 
 
 def test_fallback_client_prefers_direct_when_direct_succeeds():

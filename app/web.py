@@ -93,6 +93,7 @@ class WebRunRequest(BaseModel):
     source_limit: int = Field(default=12, ge=1, le=100)
     use_builtin_sources: bool = True
     custom_sources_text: str = ""
+    openai_api_key: str = Field(default="", max_length=300)
     amap_key: str = ""
 
 
@@ -408,6 +409,13 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
           </div>
         </div>
         <div class="field">
+          <label for="openaiKey"><span data-icon="key"></span>OpenAI API Key</label>
+          <div class="secret-field">
+            <input id="openaiKey" type="password" autocomplete="off" placeholder="请填写 OpenAI API Key">
+            <button class="secret-toggle" type="button" data-secret-toggle="openaiKey" aria-label="显示内容" aria-pressed="false"><span data-icon="eye"></span></button>
+          </div>
+        </div>
+        <div class="field">
           <label for="amapKey"><span data-icon="key"></span>高德地图 API Key</label>
           <div class="secret-field">
             <input id="amapKey" type="password" autocomplete="off" placeholder="请填写高德地图 API Key">
@@ -485,6 +493,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     const mapPanel = document.querySelector(".map-panel");
     const mapSub = document.getElementById("mapSub");
     const refreshMapBtn = document.getElementById("refreshMapBtn");
+    const openaiKeyInput = document.getElementById("openaiKey");
     const amapKeyInput = document.getElementById("amapKey");
     const amapSecurityCodeInput = document.getElementById("amapSecurityCode");
     let lastAreas = [];
@@ -839,6 +848,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         source_limit: clampSourceLimit(),
         use_builtin_sources: shouldUseBuiltinSources(),
         custom_sources_text: customSourcesInput.value,
+        openai_api_key: openaiKeyInput.value.trim(),
         amap_key: amapKeyInput.value.trim(),
       };
       runBtn.disabled = true;
