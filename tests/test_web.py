@@ -1,3 +1,5 @@
+import time
+
 from fastapi.testclient import TestClient
 
 from app import main
@@ -6,6 +8,18 @@ from app.main import app
 from app.pipeline.orchestrator import LandScoutAgentState
 from app.sources.registry import SourceConfig, SourceRegistry
 from app.web import WebRunRequest, build_runtime_registry, parse_custom_sources_text, state_to_web_response
+
+
+def wait_for_task(client: TestClient, task_id: str, timeout: float = 15.0) -> dict:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        response = client.get(f"/api/recommend-residential/tasks/{task_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] in {"succeeded", "failed"}:
+            return payload
+        time.sleep(0.05)
+    raise AssertionError(f"Task {task_id} did not finish within {timeout} seconds")
 
 
 def test_parse_custom_sources_text_accepts_line_format():
@@ -84,6 +98,8 @@ def test_web_dashboard_renders_without_auto_running_pipeline():
     assert 'data-secret-toggle="openaiKey"' in response.text
     assert 'data-secret-toggle="amapKey"' in response.text
     assert 'data-secret-toggle="amapSecurityCode"' in response.text
+    assert 'const TASK_STORAGE_KEY = "landscout.currentTaskId";' in response.text
+    assert 'function pollTask(taskId)' in response.text
     assert "function setupSecretToggles()" in response.text
     assert "异常/访问限制" not in response.text
     source_limit_max = len(main.registry.sources)
@@ -113,7 +129,11 @@ def test_web_recommend_residential_fixture_run_honors_top_k():
     )
 
     assert response.status_code == 200
-    payload = response.json()
+    task = response.json()
+    assert task["task_id"]
+    task = wait_for_task(client, task["task_id"])
+    assert task["status"] == "succeeded"
+    payload = task["result"]
     assert payload["run_id"]
     assert payload["city"] == "shanghai"
     assert payload["event_count"] >= 20
@@ -141,6 +161,29 @@ def test_web_rejects_unsupported_city():
     assert "只支持上海" in response.text
 
 
+def test_web_task_reports_background_failure(monkeypatch):
+    class FakeAgent:
+        def __init__(self, registry=None):  # type: ignore[no-untyped-def]
+            pass
+
+        def recommend_residential(self, **kwargs):  # type: ignore[no-untyped-def]
+            raise RuntimeError("synthetic task failure")
+
+    monkeypatch.setattr(main, "LandScoutAgent", FakeAgent)
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/recommend-residential",
+        json={"live": False, "days": 540, "top_k": 2, "source_limit": 12},
+    )
+
+    assert response.status_code == 200
+    task = wait_for_task(client, response.json()["task_id"])
+    assert task["status"] == "failed"
+    assert task["result"] is None
+    assert "synthetic task failure" in task["error"]
+
+
 def test_web_request_passes_amap_key_to_pipeline(monkeypatch):
     captured = {}
 
@@ -154,7 +197,7 @@ def test_web_request_passes_amap_key_to_pipeline(monkeypatch):
 
     monkeypatch.setattr(main, "LandScoutAgent", FakeAgent)
 
-    response = main.recommend_residential(
+    response = main._run_recommendation(
         WebRunRequest(city="shanghai", live=False, days=540, top_k=2, source_limit=12, amap_key="amap-test")
     )
 
@@ -176,7 +219,7 @@ def test_web_request_uses_request_scoped_openai_key(monkeypatch):
 
     monkeypatch.setattr(main, "LandScoutAgent", FakeAgent)
 
-    response = main.recommend_residential(
+    response = main._run_recommendation(
         WebRunRequest(
             city="shanghai",
             live=False,
@@ -212,7 +255,7 @@ def test_web_live_source_limit_is_capped_to_registry_size(monkeypatch):
     monkeypatch.setattr(main, "registry", small_registry)
     monkeypatch.setattr(main, "LandScoutAgent", FakeAgent)
 
-    response = main.recommend_residential(
+    response = main._run_recommendation(
         WebRunRequest(city="shanghai", live=True, days=540, top_k=2, source_limit=5)
     )
 

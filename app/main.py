@@ -19,6 +19,7 @@ from app.web import (
     build_runtime_registry,
     state_to_web_response,
 )
+from app.web_tasks import web_task_manager
 
 
 app = FastAPI(title=settings.app_name)
@@ -45,6 +46,25 @@ def brand_logo() -> FileResponse:
 
 @app.post("/api/recommend-residential")
 def recommend_residential(request: WebRunRequest) -> dict:
+    if request.city != "shanghai":
+        raise HTTPException(status_code=400, detail="当前版本只支持上海；其他城市会在后续扩展。")
+    try:
+        return web_task_manager.submit(lambda: _run_recommendation(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/recommend-residential/tasks/{task_id}")
+def recommendation_task(task_id: str) -> dict:
+    try:
+        return web_task_manager.snapshot(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Task not found or expired.") from exc
+
+
+def _run_recommendation(request: WebRunRequest) -> dict:
     try:
         with use_request_openai_api_key(request.openai_api_key):
             if request.city != "shanghai":
@@ -73,11 +93,11 @@ def recommend_residential(request: WebRunRequest) -> dict:
                     amap_key=request.amap_key.strip() or None,
                 )
     except (MissingLLMKey, OpenAINonRecoverableError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise RuntimeError(str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise RuntimeError(str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise RuntimeError(str(exc)) from exc
     return state_to_web_response(state, top_k=request.top_k)
 
 

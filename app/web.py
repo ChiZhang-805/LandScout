@@ -505,8 +505,11 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     let amapScriptKey = "";
     let amapLoading = null;
     let progressTimer = null;
+    let pollTimer = null;
     let progressValue = 0;
+    let currentTaskId = null;
     let customSourcesUserAdjusted = false;
+    const TASK_STORAGE_KEY = "landscout.currentTaskId";
     const ICONS = {
       alert: '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.7 2.4 17.4A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.6L13.7 3.7a2 2 0 0 0-3.4 0Z"/>',
       building: '<path d="M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M16 8h2a2 2 0 0 1 2 2v11"/><path d="M8 7h4"/><path d="M8 11h4"/><path d="M8 15h4"/><path d="M9 21v-3h2v3"/>',
@@ -858,6 +861,64 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         throw new Error(`接口返回的不是有效 JSON（HTTP ${status || "unknown"}）：${snippet || "无可读内容"}`);
       }
     }
+    function stopPolling(){
+      if(pollTimer){
+        window.clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+    }
+    function clearActiveTask(){
+      currentTaskId = null;
+      window.localStorage.removeItem(TASK_STORAGE_KEY);
+    }
+    async function pollTask(taskId){
+      currentTaskId = taskId;
+      try{
+        const response = await fetch(`/api/recommend-residential/tasks/${encodeURIComponent(taskId)}`);
+        const data = await readApiJson(response);
+        if(!response.ok){ throw new Error(data.detail || `任务查询失败（HTTP ${response.status}）`); }
+        if(data.status === "succeeded"){
+          stopPolling();
+          clearActiveTask();
+          renderResult(data.result);
+          setStatus("done", "完成");
+          stopProgressTimer();
+          setProgress(100, "分析完成，可以查看候选区域和输出文件", "done");
+          runBtn.disabled = false;
+          return;
+        }
+        if(data.status === "failed"){
+          stopPolling();
+          clearActiveTask();
+          setStatus("error", data.error || data.message || "任务运行失败");
+          stopProgressTimer();
+          setProgress(Math.max(progressValue, 12), "任务失败，请查看错误信息或降低源数量重试", "error");
+          runBtn.disabled = false;
+          return;
+        }
+        setStatus("running", data.message || "后台任务运行中");
+        pollTimer = window.setTimeout(() => pollTask(taskId), 2500);
+      }catch(error){
+        stopPolling();
+        clearActiveTask();
+        setStatus("error", error.message || String(error));
+        stopProgressTimer();
+        setProgress(Math.max(progressValue, 12), "任务状态查询失败，请稍后刷新页面重试", "error");
+        runBtn.disabled = false;
+      }
+    }
+    function resumeActiveTask(){
+      const taskId = window.localStorage.getItem(TASK_STORAGE_KEY);
+      if(!taskId){ return; }
+      currentTaskId = taskId;
+      runBtn.disabled = true;
+      setStatus("running", "正在恢复后台任务状态");
+      startProgress({
+        live: document.getElementById("mode").value === "live",
+        source_limit: clampSourceLimit(),
+      });
+      pollTask(taskId);
+    }
     async function runSearch(){
       const payload = {
         live: document.getElementById("mode").value === "live",
@@ -871,6 +932,8 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         amap_key: amapKeyInput.value.trim(),
       };
       runBtn.disabled = true;
+      stopPolling();
+      clearActiveTask();
       setStatus("running", "正在抓取、解析、分析");
       startProgress(payload);
       try{
@@ -881,15 +944,16 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         });
         const data = await readApiJson(response);
         if(!response.ok){ throw new Error(data.detail || "运行失败"); }
-        renderResult(data);
-        setStatus("done", "完成");
-        stopProgressTimer();
-        setProgress(100, "分析完成，可以查看候选区域和输出文件", "done");
+        if(!data.task_id){ throw new Error("后台任务没有返回 task_id"); }
+        currentTaskId = data.task_id;
+        window.localStorage.setItem(TASK_STORAGE_KEY, currentTaskId);
+        setStatus("running", data.message || "后台任务已创建");
+        pollTask(currentTaskId);
       }catch(error){
+        clearActiveTask();
         setStatus("error", error.message || String(error));
         stopProgressTimer();
         setProgress(Math.max(progressValue, 12), "运行失败，请查看错误信息或降低源数量重试", "error");
-      }finally{
         runBtn.disabled = false;
       }
     }
@@ -912,6 +976,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     window.scrollTo(0, 0);
     alignDashboardLayout();
     renderSources();
+    resumeActiveTask();
   </script>
 </body>
 </html>
