@@ -475,6 +475,9 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     </section>
   </main>
   <script>
+    if("scrollRestoration" in history){
+      history.scrollRestoration = "manual";
+    }
     const BUILTIN_SOURCES = __SOURCES_JSON__;
     const sourceLimit = document.getElementById("sourceLimit");
     const useBuiltin = document.getElementById("useBuiltin");
@@ -630,7 +633,8 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
       const panelChromeHeight = Math.max(0, panelRect.height - editorRect.height);
       const bottomBreathingRoom = 8;
       const minimumEditorHeight = 8;
-      const requestedFocusRowHeight = Math.floor(window.innerHeight - panelRect.top - bottomBreathingRoom);
+      const panelTopAtInitialScroll = panelRect.top + window.scrollY;
+      const requestedFocusRowHeight = Math.floor(window.innerHeight - panelTopAtInitialScroll - bottomBreathingRoom);
       const focusRowHeight = Math.max(panelChromeHeight + minimumEditorHeight, requestedFocusRowHeight);
       shell.style.setProperty("--dashboard-focus-row", `${focusRowHeight}px`);
       const editorHeight = Math.max(minimumEditorHeight, focusRowHeight - panelChromeHeight);
@@ -892,6 +896,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     window.addEventListener("resize", () => window.requestAnimationFrame(alignDashboardLayout));
     hydrateStaticIcons();
     setupSecretToggles();
+    window.scrollTo(0, 0);
     alignDashboardLayout();
     renderSources();
   </script>
