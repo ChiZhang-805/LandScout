@@ -845,6 +845,19 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
       mapContainer.innerHTML = `<div class="map-placeholder">${points}<div class="legend">${escapeHtml(note || "坐标为候选区中心点；圆半径来自评分候选区。")}</div></div>`;
       mapSub.textContent = `已绘制 ${areas.length} 个候选区域坐标覆盖圆。`;
     }
+    async function readApiJson(response){
+      const status = `${response.status} ${response.statusText || ""}`.trim();
+      const text = await response.text();
+      if(!text.trim()){
+        throw new Error(`接口返回空响应（HTTP ${status || "unknown"}）。通常是服务器超时、重启或连接被中断。`);
+      }
+      try{
+        return JSON.parse(text);
+      }catch(error){
+        const snippet = text.replace(/\s+/g, " ").slice(0, 240);
+        throw new Error(`接口返回的不是有效 JSON（HTTP ${status || "unknown"}）：${snippet || "无可读内容"}`);
+      }
+    }
     async function runSearch(){
       const payload = {
         live: document.getElementById("mode").value === "live",
@@ -866,7 +879,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
           headers:{"Content-Type":"application/json"},
           body:JSON.stringify(payload),
         });
-        const data = await response.json();
+        const data = await readApiJson(response);
         if(!response.ok){ throw new Error(data.detail || "运行失败"); }
         renderResult(data);
         setStatus("done", "完成");
