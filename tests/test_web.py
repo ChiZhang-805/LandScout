@@ -100,8 +100,9 @@ def test_web_dashboard_renders_without_auto_running_pipeline():
     assert 'data-secret-toggle="openaiKey"' in response.text
     assert 'data-secret-toggle="amapKey"' in response.text
     assert 'data-secret-toggle="amapSecurityCode"' in response.text
-    assert 'const TASK_STORAGE_KEY = "landscout.currentTaskId";' in response.text
+    assert 'const TASK_STORAGE_KEY = "landscout.currentTaskId.v2";' in response.text
     assert "MAX_TRANSIENT_POLL_FAILURES" in response.text
+    assert "function resetExpiredTask(taskId)" in response.text
     assert 'function pollTask(taskId)' in response.text
     assert "function setupSecretToggles()" in response.text
     assert "异常/访问限制" not in response.text

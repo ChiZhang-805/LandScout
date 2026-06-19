@@ -510,7 +510,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     let currentTaskId = null;
     let pollFailureCount = 0;
     let customSourcesUserAdjusted = false;
-    const TASK_STORAGE_KEY = "landscout.currentTaskId";
+    const TASK_STORAGE_KEY = "landscout.currentTaskId.v2";
     const MAX_TRANSIENT_POLL_FAILURES = 18;
     const ICONS = {
       alert: '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.7 2.4 17.4A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.6L13.7 3.7a2 2 0 0 0-3.4 0Z"/>',
@@ -924,6 +924,14 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
       pollTimer = window.setTimeout(() => pollTask(taskId), 4000);
       return true;
     }
+    function resetExpiredTask(taskId){
+      stopPolling();
+      clearActiveTask(taskId);
+      stopProgressTimer();
+      setStatus("", "等待搜索");
+      setProgress(0, "上一次任务记录已过期，请重新点击搜索", "");
+      runBtn.disabled = false;
+    }
     async function pollTask(taskId){
       if(currentTaskId !== taskId){
         return;
@@ -932,6 +940,10 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
         const response = await fetch(`/api/recommend-residential/tasks/${encodeURIComponent(taskId)}`);
         const data = await readApiJson(response);
         if(currentTaskId !== taskId){
+          return;
+        }
+        if(response.status === 400 || response.status === 404){
+          resetExpiredTask(taskId);
           return;
         }
         if(!response.ok){
