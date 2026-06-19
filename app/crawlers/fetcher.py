@@ -242,23 +242,41 @@ class PublicFetcher:
                         reason=f"http status {response.status_code}; response body was not saved as a public document",
                         status_code=response.status_code,
                     )
-                length_error = self._content_length_error(source, url, response.headers, response.status_code)
-                if length_error:
-                    return length_error
-
                 content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
                 filename_hint = filename_from_content_disposition(response.headers.get("content-disposition", ""))
+                initial_kind = infer_kind(url, content_type, filename_hint=filename_hint)
+                if initial_kind not in PUBLIC_DOCUMENT_KINDS and content_type not in {"", "application/octet-stream"}:
+                    return FetchError(
+                        source_id=source.id,
+                        url=url,
+                        reason=(
+                            f"unsupported content kind '{initial_kind}'; "
+                            "response body was not saved as an analyzable public document"
+                        ),
+                        status_code=response.status_code,
+                    )
+                byte_limit = self._response_byte_limit(url, content_type, filename_hint, kind=initial_kind)
+                length_error = self._content_length_error(
+                    source,
+                    url,
+                    response.headers,
+                    response.status_code,
+                    byte_limit=byte_limit,
+                    limit_label=self._limit_label(initial_kind),
+                )
+                if length_error:
+                    return length_error
                 body_chunks: list[bytes] = []
                 total_bytes = 0
                 for chunk in response.iter_bytes():
                     total_bytes += len(chunk)
-                    if total_bytes > settings.max_response_bytes:
+                    if total_bytes > byte_limit:
                         return FetchError(
                             source_id=source.id,
                             url=url,
                             reason=(
-                                f"response body exceeds memory-safe limit "
-                                f"({settings.max_response_bytes} bytes); skipped"
+                                f"response body exceeds {self._limit_label(initial_kind)} limit "
+                                f"({byte_limit} bytes); skipped"
                             ),
                             status_code=response.status_code,
                         )
@@ -307,7 +325,8 @@ class PublicFetcher:
         filename_hint: str = "",
         kind_override: RawKind | None = None,
     ) -> RawDocument | None:
-        if self._document_budget_exhausted() or len(body) > settings.max_response_bytes:
+        byte_limit = self._response_byte_limit(url, content_type, filename_hint, kind=kind_override)
+        if self._document_budget_exhausted() or len(body) > byte_limit:
             return None
         digest = content_hash(body)
         if digest in self.seen_hashes:
@@ -390,21 +409,29 @@ class PublicFetcher:
                             )
                             return
                         filename_hint = filename_from_content_disposition(response.headers.get("content-disposition", ""))
-                        length_error = self._content_length_error(source, response_url, response.headers, response.status)
+                        response_kind = infer_kind(response_url, response_type, filename_hint=filename_hint)
+                        byte_limit = self._response_byte_limit(response_url, response_type, filename_hint, kind=response_kind)
+                        length_error = self._content_length_error(
+                            source,
+                            response_url,
+                            response.headers,
+                            response.status,
+                            byte_limit=byte_limit,
+                            limit_label=self._limit_label(response_kind),
+                        )
                         if length_error:
                             result.errors.append(length_error)
                             return
-                        response_kind = infer_kind(response_url, response_type, filename_hint=filename_hint)
                         if response_kind in PUBLIC_DOCUMENT_KINDS or response_type in {"", "application/octet-stream"}:
                             body = response.body()
-                            if len(body) > settings.max_response_bytes:
+                            if len(body) > byte_limit:
                                 result.errors.append(
                                     FetchError(
                                         source_id=source.id,
                                         url=response_url,
                                         reason=(
-                                            f"network response body exceeds memory-safe limit "
-                                            f"({settings.max_response_bytes} bytes); skipped"
+                                            f"network response body exceeds {self._limit_label(response_kind)} limit "
+                                            f"({byte_limit} bytes); skipped"
                                         ),
                                         status_code=response.status,
                                     )
@@ -452,14 +479,15 @@ class PublicFetcher:
                 except Exception:
                     pass
                 body = page.content().encode("utf-8", errors="ignore")
-                if len(body) > settings.max_response_bytes:
+                rendered_limit = self._response_byte_limit(url, "text/html", "", kind="html")
+                if len(body) > rendered_limit:
                     result.errors.append(
                         FetchError(
                             source_id=source.id,
                             url=url,
                             reason=(
-                                f"rendered page exceeds memory-safe limit "
-                                f"({settings.max_response_bytes} bytes); body ignored"
+                                f"rendered page exceeds web response limit "
+                                f"({rendered_limit} bytes); body ignored"
                             ),
                             status_code=200,
                         )
@@ -589,6 +617,9 @@ class PublicFetcher:
         url: str,
         headers: httpx.Headers,
         status_code: int | None,
+        *,
+        byte_limit: int,
+        limit_label: str,
     ) -> FetchError | None:
         content_length = headers.get("content-length", "").strip()
         if not content_length:
@@ -597,14 +628,36 @@ class PublicFetcher:
             byte_count = int(content_length)
         except ValueError:
             return None
-        if byte_count <= settings.max_response_bytes:
+        if byte_count <= byte_limit:
             return None
         return FetchError(
             source_id=source.id,
             url=url,
-            reason=f"response content-length {byte_count} exceeds memory-safe limit ({settings.max_response_bytes} bytes); skipped",
+            reason=f"response content-length {byte_count} exceeds {limit_label} limit ({byte_limit} bytes); skipped",
             status_code=status_code,
         )
+
+    def _response_byte_limit(
+        self,
+        url: str,
+        content_type: str,
+        filename_hint: str = "",
+        *,
+        kind: RawKind | None = None,
+    ) -> int:
+        inferred = kind or infer_kind(url, content_type, filename_hint=filename_hint)
+        if inferred in {"html", "json", "text"} or content_type.startswith("text/"):
+            return settings.max_web_response_bytes
+        if inferred in {"pdf", "excel", "word", "csv"} or content_type in {"", "application/octet-stream"}:
+            return settings.max_attachment_response_bytes
+        return settings.max_response_bytes
+
+    def _limit_label(self, kind: RawKind | None) -> str:
+        if kind in {"html", "json", "text"}:
+            return "web response"
+        if kind in {"pdf", "excel", "word", "csv"}:
+            return "attachment"
+        return "configured response"
 
 
 def chromium_launch_options() -> dict[str, object]:

@@ -113,7 +113,7 @@ def test_fetcher_skips_responses_over_memory_limit(tmp_path, monkeypatch):
     fetcher = PublicFetcher(SourceRegistry([source]), run_id="run", run_dir=tmp_path)
     monkeypatch.setattr(fetcher.robots, "allowed", lambda url: True)
     monkeypatch.setattr(fetcher, "_domain_delay", lambda url, delay: None)
-    monkeypatch.setattr("app.crawlers.fetcher.settings.max_response_bytes", 4)
+    monkeypatch.setattr("app.crawlers.fetcher.settings.max_attachment_response_bytes", 4)
     monkeypatch.setattr(
         fetcher.client,
         "stream",
@@ -129,7 +129,55 @@ def test_fetcher_skips_responses_over_memory_limit(tmp_path, monkeypatch):
 
     assert result.documents == []
     assert len(result.errors) == 1
-    assert "memory-safe limit" in result.errors[0].reason
+    assert "attachment limit" in result.errors[0].reason
+
+
+def test_fetcher_uses_larger_limit_for_attachments_than_web_pages(tmp_path, monkeypatch):
+    web_source = SourceConfig(
+        id="web",
+        name="Web Source",
+        base_urls=["https://example.sh.gov.cn/index.html"],
+    )
+    pdf_source = SourceConfig(
+        id="pdf",
+        name="PDF Source",
+        base_urls=["https://example.sh.gov.cn/file.pdf"],
+    )
+    monkeypatch.setattr("app.crawlers.fetcher.settings.max_web_response_bytes", 8)
+    monkeypatch.setattr("app.crawlers.fetcher.settings.max_attachment_response_bytes", 64)
+
+    web_fetcher = PublicFetcher(SourceRegistry([web_source]), run_id="run", run_dir=tmp_path / "web")
+    pdf_fetcher = PublicFetcher(SourceRegistry([pdf_source]), run_id="run", run_dir=tmp_path / "pdf")
+    for fetcher in (web_fetcher, pdf_fetcher):
+        monkeypatch.setattr(fetcher.robots, "allowed", lambda url: True)
+        monkeypatch.setattr(fetcher, "_domain_delay", lambda url, delay: None)
+
+    monkeypatch.setattr(
+        web_fetcher.client,
+        "stream",
+        lambda method, url: stream_response(
+            httpx.Response(200, headers={"content-type": "text/html"}, content=b"<html>too long</html>")
+        ),
+    )
+    monkeypatch.setattr(
+        pdf_fetcher.client,
+        "stream",
+        lambda method, url: stream_response(
+            httpx.Response(200, headers={"content-type": "application/pdf"}, content=b"%PDF-1.7\nshort")
+        ),
+    )
+
+    try:
+        web_result = web_fetcher.fetch_source("web", pages=1)
+        pdf_result = pdf_fetcher.fetch_source("pdf", pages=1)
+    finally:
+        web_fetcher.close()
+        pdf_fetcher.close()
+
+    assert web_result.documents == []
+    assert "web response limit" in web_result.errors[0].reason
+    assert len(pdf_result.documents) == 1
+    assert pdf_result.documents[0].kind == "pdf"
 
 
 def test_fetcher_respects_raw_document_budget(tmp_path):

@@ -76,7 +76,19 @@ class Settings(BaseModel):
     max_response_bytes: int = Field(
         default_factory=lambda: env_int(
             "LANDSCOUT_MAX_RESPONSE_BYTES",
-            1_500_000 if default_memory_safe_mode() else 8_000_000,
+            8_000_000 if default_memory_safe_mode() else 20_000_000,
+        )
+    )
+    max_web_response_bytes: int = Field(
+        default_factory=lambda: env_int(
+            "LANDSCOUT_MAX_WEB_RESPONSE_BYTES",
+            3_000_000 if default_memory_safe_mode() else 8_000_000,
+        )
+    )
+    max_attachment_response_bytes: int = Field(
+        default_factory=lambda: env_int(
+            "LANDSCOUT_MAX_ATTACHMENT_RESPONSE_BYTES",
+            8_000_000 if default_memory_safe_mode() else 20_000_000,
         )
     )
     max_raw_documents: int = Field(
@@ -95,6 +107,18 @@ class Settings(BaseModel):
         default_factory=lambda: env_int(
             "LANDSCOUT_MAX_EXTRACTION_DOCUMENTS",
             18 if default_memory_safe_mode() else 80,
+        )
+    )
+    max_pdf_pages: int = Field(
+        default_factory=lambda: env_int("LANDSCOUT_MAX_PDF_PAGES", 8 if default_memory_safe_mode() else 30)
+    )
+    max_excel_sheets: int = Field(
+        default_factory=lambda: env_int("LANDSCOUT_MAX_EXCEL_SHEETS", 8 if default_memory_safe_mode() else 30)
+    )
+    max_excel_rows_per_sheet: int = Field(
+        default_factory=lambda: env_int(
+            "LANDSCOUT_MAX_EXCEL_ROWS_PER_SHEET",
+            300 if default_memory_safe_mode() else 2_000,
         )
     )
     outputs_dir: Path = PROJECT_ROOT / "outputs"

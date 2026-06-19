@@ -29,8 +29,18 @@ services:
       - key: LANDSCOUT_MAX_RAW_DOCUMENTS
         value: "42"
       - key: LANDSCOUT_MAX_RESPONSE_BYTES
-        value: "1500000"
+        value: "8000000"
+      - key: LANDSCOUT_MAX_WEB_RESPONSE_BYTES
+        value: "3000000"
+      - key: LANDSCOUT_MAX_ATTACHMENT_RESPONSE_BYTES
+        value: "8000000"
       - key: LANDSCOUT_MAX_DOCUMENT_CHARS
         value: "20000"
       - key: LANDSCOUT_MAX_EXTRACTION_DOCUMENTS
         value: "18"
+      - key: LANDSCOUT_MAX_PDF_PAGES
+        value: "8"
+      - key: LANDSCOUT_MAX_EXCEL_SHEETS
+        value: "8"
+      - key: LANDSCOUT_MAX_EXCEL_ROWS_PER_SHEET
+        value: "300"

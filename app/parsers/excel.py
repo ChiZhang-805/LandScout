@@ -6,6 +6,7 @@ from typing import Any
 
 from openpyxl import load_workbook
 
+from app.core.config import settings
 from app.parsers.models import ParsedDocument
 
 
@@ -39,10 +40,14 @@ def parse_excel(
         stream = content_or_path
     workbook = load_workbook(stream, data_only=True, read_only=True)
     try:
-        sheet_values = [
-            (sheet.title, [[_cell_to_str(cell) for cell in row] for row in sheet.iter_rows(values_only=True)])
-            for sheet in workbook.worksheets
-        ]
+        sheet_values = []
+        for sheet in workbook.worksheets[: max(1, settings.max_excel_sheets)]:
+            rows = []
+            for idx, row in enumerate(sheet.iter_rows(values_only=True)):
+                if idx >= max(1, settings.max_excel_rows_per_sheet):
+                    break
+                rows.append([_cell_to_str(cell) for cell in row])
+            sheet_values.append((sheet.title, rows))
     finally:
         workbook.close()
     return parsed_from_sheet_values(
@@ -85,8 +90,9 @@ def parse_legacy_xls(
             metadata={"unsupported": ".xls", "row_count": 0, "error": str(exc)},
         )
     sheet_values = []
-    for sheet_name, frame in sheets.items():
+    for sheet_name, frame in list(sheets.items())[: max(1, settings.max_excel_sheets)]:
         frame = frame.fillna("")
+        frame = frame.head(max(1, settings.max_excel_rows_per_sheet))
         values = [[_cell_to_str(value) for value in row] for row in frame.to_numpy().tolist()]
         sheet_values.append((str(sheet_name), values))
     return parsed_from_sheet_values(
