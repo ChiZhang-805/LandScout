@@ -4,6 +4,7 @@ import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+import gc
 import re
 import urllib.parse
 from typing import Any
@@ -31,7 +32,7 @@ from app.scoring.candidates import generate_candidates
 from app.scoring.residential import ResidentialCandidateScore, score_residential_candidates
 from app.scoring.scorer import CandidateScore, score_candidates
 from app.sources.discovery import DiscoveryRun, SourceScoutAgent
-from app.sources.registry import SourceRegistry, load_shanghai_registry
+from app.sources.registry import SourceConfig, SourceRegistry, load_shanghai_registry
 
 
 class LandScoutAgentState(BaseModel):
@@ -70,7 +71,7 @@ class LandScoutAgent:
                 raw_documents=fetch_result.documents,
                 errors=[error.model_dump(mode="json") for error in fetch_result.errors],
                 visited_sources=fetch_result.visited_sources,
-                api_enrichment_enabled=True,
+                api_enrichment_enabled=not settings.memory_safe_mode,
             )
             save_state(state)
             try:
@@ -118,6 +119,7 @@ class LandScoutAgent:
         ensure_dir(run_dir)
         ensure_dir(output_dir)
         if live:
+            source_limit = cap_live_source_limit(source_limit)
             active_registry = self.registry
             effective_source_limit = source_limit
             discovered_sources: list[dict[str, Any]] = []
@@ -152,7 +154,7 @@ class LandScoutAgent:
                 errors=[*source_scout_errors, *[error.model_dump(mode="json") for error in fetch_result.errors]],
                 visited_sources=fetch_result.visited_sources,
                 discovered_sources=discovered_sources,
-                api_enrichment_enabled=True,
+                api_enrichment_enabled=not settings.memory_safe_mode,
             )
             save_state(state)
         else:
@@ -307,11 +309,58 @@ class LandScoutAgent:
         registry: SourceRegistry | None = None,
         days: int | None = None,
     ) -> FetchRunResult:
-        fetcher = PublicFetcher(registry or self.registry, run_id=run_id, run_dir=run_dir)
+        active_registry = registry or self.registry
+        selected_sources = active_registry.select(source_limit)
+        if settings.memory_safe_mode and settings.live_source_batch_size > 0:
+            return self._fetch_live_in_batches(run_id, run_dir, selected_sources, days=days)
+        fetcher = PublicFetcher(SourceRegistry(selected_sources), run_id=run_id, run_dir=run_dir)
         try:
-            return fetcher.fetch_many(source_limit=source_limit, days=days)
+            return fetcher.fetch_many(days=days)
         finally:
             fetcher.close()
+
+    def _fetch_live_in_batches(
+        self,
+        run_id: str,
+        run_dir: Path,
+        sources: list[SourceConfig],
+        *,
+        days: int | None = None,
+    ) -> FetchRunResult:
+        aggregate = FetchRunResult(run_id=run_id)
+        batch_size = max(1, settings.live_source_batch_size)
+        remaining_documents = max(1, settings.max_raw_documents)
+        for batch_start in range(0, len(sources), batch_size):
+            if remaining_documents <= 0:
+                next_source = sources[batch_start]
+                aggregate.errors.append(
+                    FetchError(
+                        source_id=next_source.id,
+                        url=next_source.urls[0] if next_source.urls else "",
+                        reason=f"raw document budget reached ({settings.max_raw_documents}); remaining source batches skipped",
+                    )
+                )
+                break
+            batch_sources = sources[batch_start : batch_start + batch_size]
+            fetcher = PublicFetcher(
+                SourceRegistry(batch_sources),
+                run_id=run_id,
+                run_dir=run_dir,
+                max_documents=remaining_documents,
+            )
+            try:
+                result = fetcher.fetch_many(days=days)
+            finally:
+                fetcher.close()
+            aggregate.documents.extend(result.documents)
+            aggregate.errors.extend(result.errors)
+            aggregate.visited_sources.extend(result.visited_sources)
+            aggregate.discovered_urls.extend(result.discovered_urls)
+            remaining_documents -= len(result.documents)
+            gc.collect()
+        aggregate.visited_sources = list(dict.fromkeys(aggregate.visited_sources))
+        aggregate.discovered_urls = list(dict.fromkeys(aggregate.discovered_urls))
+        return aggregate
 
     def _discover_live_sources(
         self,
@@ -349,7 +398,7 @@ class LandScoutAgent:
         parsed_documents: list[ParsedDocument] = []
         for raw in state.raw_documents:
             try:
-                parsed_documents.append(parse_raw_document(raw))
+                parsed_documents.append(compact_parsed_document(parse_raw_document(raw)))
             except Exception as exc:
                 state.errors.append({"source_id": raw.source_id, "url": raw.url, "reason": f"parse failed: {exc}"})
         state.parsed_documents = parsed_documents
@@ -392,6 +441,20 @@ class LandScoutAgent:
                     }
                 )
         state.parsed_documents = parsed_documents
+        if live and len(documents_for_extraction) > settings.max_extraction_documents:
+            original_count = len(documents_for_extraction)
+            documents_for_extraction = documents_for_extraction[: settings.max_extraction_documents]
+            state.errors.append(
+                {
+                    "source_id": "pipeline",
+                    "url": "",
+                    "reason": (
+                        f"extraction document cap applied: {settings.max_extraction_documents} of "
+                        f"{original_count} relevant documents analyzed to stay within memory limits"
+                    ),
+                    "stage": "document_budget",
+                }
+            )
         save_state(state)
 
         extractor = LLMExtractor(live=live, allow_heuristic=not live)
@@ -467,6 +530,31 @@ class LandScoutAgent:
             update_latest(output_dir)
         save_state(state)
         return state
+
+
+def cap_live_source_limit(source_limit: int) -> int:
+    if not settings.memory_safe_mode:
+        return source_limit
+    return max(1, min(source_limit, settings.live_source_limit_cap))
+
+
+def compact_parsed_document(document: ParsedDocument) -> ParsedDocument:
+    max_chars = max(1_000, settings.max_document_chars)
+    if len(document.text) > max_chars:
+        document.metadata["truncated_from_chars"] = len(document.text)
+        document.text = document.text[:max_chars]
+    if settings.memory_safe_mode:
+        if len(document.rows) > 200:
+            document.metadata["truncated_from_rows"] = len(document.rows)
+            document.rows = document.rows[:200]
+        if len(document.tables) > 8:
+            document.metadata["truncated_from_tables"] = len(document.tables)
+            document.tables = document.tables[:8]
+        compacted_tables: list[list[list[str]]] = []
+        for table in document.tables:
+            compacted_tables.append([row[:20] for row in table[:80]])
+        document.tables = compacted_tables
+    return document
 
 
 def make_run_id() -> str:

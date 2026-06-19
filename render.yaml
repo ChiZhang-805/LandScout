@@ -6,7 +6,6 @@ services:
     buildCommand: |
       python -m pip install --upgrade pip
       python -m pip install -e .
-      python -m playwright install chromium
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     autoDeploy: true
@@ -18,6 +17,20 @@ services:
       - key: USER_AGENT
         value: landscout-agent/0.1 (+public-source-research)
       - key: REQUEST_TIMEOUT_SECONDS
-        value: "30"
-      - key: PLAYWRIGHT_BROWSERS_PATH
-        value: /opt/render/project/.cache/ms-playwright
+        value: "25"
+      - key: LANDSCOUT_MEMORY_SAFE_MODE
+        value: "true"
+      - key: LANDSCOUT_DISABLE_PLAYWRIGHT
+        value: "true"
+      - key: LANDSCOUT_LIVE_SOURCE_LIMIT_CAP
+        value: "12"
+      - key: LANDSCOUT_LIVE_SOURCE_BATCH_SIZE
+        value: "3"
+      - key: LANDSCOUT_MAX_RAW_DOCUMENTS
+        value: "42"
+      - key: LANDSCOUT_MAX_RESPONSE_BYTES
+        value: "1500000"
+      - key: LANDSCOUT_MAX_DOCUMENT_CHARS
+        value: "20000"
+      - key: LANDSCOUT_MAX_EXTRACTION_DOCUMENTS
+        value: "18"

@@ -1,4 +1,5 @@
 from pathlib import Path
+from contextlib import contextmanager
 import sys
 import types
 from datetime import date
@@ -20,6 +21,11 @@ from app.crawlers.models import FetchError, RawDocument
 from app.sources.registry import SourceConfig, SourceRegistry
 
 
+@contextmanager
+def stream_response(response: httpx.Response):
+    yield response
+
+
 def test_fetcher_does_not_save_http_error_pages(tmp_path, monkeypatch):
     source = SourceConfig(
         id="test",
@@ -32,8 +38,8 @@ def test_fetcher_does_not_save_http_error_pages(tmp_path, monkeypatch):
     monkeypatch.setattr(fetcher, "_domain_delay", lambda url, delay: None)
     monkeypatch.setattr(
         fetcher.client,
-        "get",
-        lambda url: httpx.Response(404, content=b"<html>not found</html>"),
+        "stream",
+        lambda method, url: stream_response(httpx.Response(404, content=b"<html>not found</html>")),
     )
 
     try:
@@ -58,8 +64,8 @@ def test_fetcher_does_not_save_unsupported_binary_documents(tmp_path, monkeypatc
     monkeypatch.setattr(fetcher, "_domain_delay", lambda url, delay: None)
     monkeypatch.setattr(
         fetcher.client,
-        "get",
-        lambda url: httpx.Response(200, headers={"content-type": "image/png"}, content=b"\x89PNG\r\n"),
+        "stream",
+        lambda method, url: stream_response(httpx.Response(200, headers={"content-type": "image/png"}, content=b"\x89PNG\r\n")),
     )
 
     try:
@@ -83,8 +89,8 @@ def test_fetcher_uses_magic_bytes_for_octet_stream_documents(tmp_path, monkeypat
     monkeypatch.setattr(fetcher, "_domain_delay", lambda url, delay: None)
     monkeypatch.setattr(
         fetcher.client,
-        "get",
-        lambda url: httpx.Response(200, headers={"content-type": "application/octet-stream"}, content=b"%PDF-1.7\nbody"),
+        "stream",
+        lambda method, url: stream_response(httpx.Response(200, headers={"content-type": "application/octet-stream"}, content=b"%PDF-1.7\nbody")),
     )
 
     try:
@@ -96,6 +102,52 @@ def test_fetcher_uses_magic_bytes_for_octet_stream_documents(tmp_path, monkeypat
     assert len(result.documents) == 1
     assert result.documents[0].kind == "pdf"
     assert Path(result.documents[0].path).suffix == ".pdf"
+
+
+def test_fetcher_skips_responses_over_memory_limit(tmp_path, monkeypatch):
+    source = SourceConfig(
+        id="test",
+        name="Test Source",
+        base_urls=["https://example.sh.gov.cn/big.pdf"],
+    )
+    fetcher = PublicFetcher(SourceRegistry([source]), run_id="run", run_dir=tmp_path)
+    monkeypatch.setattr(fetcher.robots, "allowed", lambda url: True)
+    monkeypatch.setattr(fetcher, "_domain_delay", lambda url, delay: None)
+    monkeypatch.setattr("app.crawlers.fetcher.settings.max_response_bytes", 4)
+    monkeypatch.setattr(
+        fetcher.client,
+        "stream",
+        lambda method, url: stream_response(
+            httpx.Response(200, headers={"content-type": "application/pdf"}, content=b"%PDF-1.7\nbody")
+        ),
+    )
+
+    try:
+        result = fetcher.fetch_source("test", pages=1)
+    finally:
+        fetcher.close()
+
+    assert result.documents == []
+    assert len(result.errors) == 1
+    assert "memory-safe limit" in result.errors[0].reason
+
+
+def test_fetcher_respects_raw_document_budget(tmp_path):
+    source = SourceConfig(
+        id="test",
+        name="Test Source",
+        base_urls=["https://example.sh.gov.cn/a.html"],
+    )
+    fetcher = PublicFetcher(SourceRegistry([source]), run_id="run", run_dir=tmp_path, max_documents=1)
+
+    try:
+        first = fetcher._save_raw_document(source, "https://example.sh.gov.cn/a.html", b"<html>a</html>", "text/html", 200, tmp_path)
+        second = fetcher._save_raw_document(source, "https://example.sh.gov.cn/b.html", b"<html>b</html>", "text/html", 200, tmp_path)
+    finally:
+        fetcher.close()
+
+    assert first is not None
+    assert second is None
 
 
 def test_fetcher_uses_content_disposition_filename_for_kind_and_suffix():

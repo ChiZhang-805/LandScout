@@ -71,6 +71,8 @@ def _run_recommendation(request: WebRunRequest) -> dict:
                 raise ValueError("当前版本只支持上海；其他城市会在后续扩展。")
             if request.live:
                 builtin_source_limit = min(request.source_limit, len(registry.sources))
+                if settings.memory_safe_mode:
+                    builtin_source_limit = min(builtin_source_limit, max(1, settings.live_source_limit_cap))
                 runtime_registry = build_runtime_registry(
                     registry,
                     source_limit=builtin_source_limit,

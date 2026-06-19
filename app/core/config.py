@@ -16,6 +16,27 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env", override=True)
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+
+def default_memory_safe_mode() -> bool:
+    return env_bool("LANDSCOUT_MEMORY_SAFE_MODE", bool(os.getenv("RENDER")))
+
+
 class Settings(BaseModel):
     app_name: str = Field(default_factory=lambda: os.getenv("APP_NAME", PRODUCT_DISPLAY_NAME))
     database_url: str = Field(
@@ -35,6 +56,46 @@ class Settings(BaseModel):
     )
     request_timeout_seconds: float = Field(
         default_factory=lambda: float(os.getenv("REQUEST_TIMEOUT_SECONDS", "30"))
+    )
+    memory_safe_mode: bool = Field(default_factory=default_memory_safe_mode)
+    disable_playwright: bool = Field(
+        default_factory=lambda: env_bool("LANDSCOUT_DISABLE_PLAYWRIGHT", default_memory_safe_mode())
+    )
+    live_source_limit_cap: int = Field(
+        default_factory=lambda: env_int(
+            "LANDSCOUT_LIVE_SOURCE_LIMIT_CAP",
+            12 if default_memory_safe_mode() else 100,
+        )
+    )
+    live_source_batch_size: int = Field(
+        default_factory=lambda: env_int(
+            "LANDSCOUT_LIVE_SOURCE_BATCH_SIZE",
+            3 if default_memory_safe_mode() else 0,
+        )
+    )
+    max_response_bytes: int = Field(
+        default_factory=lambda: env_int(
+            "LANDSCOUT_MAX_RESPONSE_BYTES",
+            1_500_000 if default_memory_safe_mode() else 8_000_000,
+        )
+    )
+    max_raw_documents: int = Field(
+        default_factory=lambda: env_int(
+            "LANDSCOUT_MAX_RAW_DOCUMENTS",
+            40 if default_memory_safe_mode() else 200,
+        )
+    )
+    max_document_chars: int = Field(
+        default_factory=lambda: env_int(
+            "LANDSCOUT_MAX_DOCUMENT_CHARS",
+            20_000 if default_memory_safe_mode() else 60_000,
+        )
+    )
+    max_extraction_documents: int = Field(
+        default_factory=lambda: env_int(
+            "LANDSCOUT_MAX_EXTRACTION_DOCUMENTS",
+            18 if default_memory_safe_mode() else 80,
+        )
     )
     outputs_dir: Path = PROJECT_ROOT / "outputs"
     data_dir: Path = PROJECT_ROOT / "data"

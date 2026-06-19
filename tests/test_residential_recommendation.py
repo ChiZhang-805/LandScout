@@ -2,13 +2,16 @@ from pathlib import Path
 
 from app.core.branding import PRODUCT_DISPLAY_NAME
 from app.core.utils import read_json
+from app.crawlers.models import FetchRunResult
 from app.llm.client import LLMExtractor
 from app.llm.schemas import Evidence, EventType, GovernmentEvent, GovernmentSignalExtraction
+import app.pipeline.orchestrator as orchestrator_module
 from app.pipeline.orchestrator import LandScoutAgent, make_run_id, save_state
 from app.renderers.residential_report import build_residential_markdown
 import app.scoring.residential as residential_scoring
 from app.scoring.residential import ResidentialCandidateScore, score_residential_candidates
 from app.scoring.candidates import seed_candidates
+from app.sources.registry import SourceConfig, SourceRegistry
 
 
 def test_residential_recommendation_generates_outputs():
@@ -260,3 +263,43 @@ def test_pipeline_does_not_score_events_marked_needs_review(monkeypatch):
     assert all(score.evidence_count == 0 for score in state.residential_scores)
     signals = read_json(Path(state.outputs.signals_json))
     assert signals["top_areas"] == []
+
+
+def test_live_fetch_uses_source_batches_in_memory_safe_mode(tmp_path, monkeypatch):
+    sources = [
+        SourceConfig(
+            id=f"source_{idx}",
+            name=f"Source {idx}",
+            base_urls=[f"https://example{idx}.sh.gov.cn/"],
+        )
+        for idx in range(5)
+    ]
+    batches: list[list[str]] = []
+
+    class FakeFetcher:
+        def __init__(self, registry, run_id, run_dir, max_documents=None):  # type: ignore[no-untyped-def]
+            self.registry = registry
+            self.run_id = run_id
+
+        def fetch_many(self, source_limit=None, pages=None, days=None):  # type: ignore[no-untyped-def]
+            source_ids = [source.id for source in self.registry.sources]
+            batches.append(source_ids)
+            return FetchRunResult(run_id=self.run_id, visited_sources=source_ids)
+
+        def close(self):  # type: ignore[no-untyped-def]
+            return None
+
+    monkeypatch.setattr(orchestrator_module.settings, "memory_safe_mode", True)
+    monkeypatch.setattr(orchestrator_module.settings, "live_source_batch_size", 2)
+    monkeypatch.setattr(orchestrator_module.settings, "max_raw_documents", 10)
+    monkeypatch.setattr(orchestrator_module, "PublicFetcher", FakeFetcher)
+
+    result = LandScoutAgent(registry=SourceRegistry(sources))._fetch_live(
+        "run",
+        tmp_path,
+        source_limit=5,
+        days=200,
+    )
+
+    assert batches == [["source_0", "source_1"], ["source_2", "source_3"], ["source_4"]]
+    assert result.visited_sources == ["source_0", "source_1", "source_2", "source_3", "source_4"]

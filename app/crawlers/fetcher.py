@@ -43,6 +43,7 @@ class PublicFetcher:
         run_id: str,
         run_dir: Path,
         user_agent: str | None = None,
+        max_documents: int | None = None,
     ) -> None:
         self.registry = registry
         self.run_id = run_id
@@ -52,6 +53,8 @@ class PublicFetcher:
         self.robots = RobotsCache(self.user_agent)
         self.last_domain_access: dict[str, float] = {}
         self.seen_hashes: set[str] = set()
+        self.saved_documents = 0
+        self.max_documents = max(1, max_documents or settings.max_raw_documents)
         self.client = httpx.Client(
             headers={"User-Agent": self.user_agent},
             follow_redirects=True,
@@ -71,6 +74,9 @@ class PublicFetcher:
         urls = source.urls[:page_budget]
 
         for url in urls:
+            if self._document_budget_exhausted():
+                result.errors.append(self._document_budget_error(source, url))
+                break
             doc = self._fetch_public_url(source, url, source_dir)
             if isinstance(doc, FetchError):
                 result.errors.append(doc)
@@ -81,15 +87,11 @@ class PublicFetcher:
                 if doc.kind == "html":
                     self._fetch_related_from_html(source, doc, source_dir, page_budget, result, cutoff_date=cutoff_date)
 
-            if source.access_mode in {"http_then_playwright", "playwright_with_network_discovery"}:
-                should_render = source.access_mode == "playwright_with_network_discovery" or (
-                    doc is not None and not isinstance(doc, FetchError) and doc.kind == "html" and doc.file_path.stat().st_size < 5000
-                )
-                if should_render:
-                    rendered = self._fetch_with_playwright(source, url, source_dir)
-                    result.documents.extend(rendered.documents)
-                    result.errors.extend(rendered.errors)
-                    result.discovered_urls.extend(rendered.discovered_urls)
+            if self._should_use_playwright(source, doc):
+                rendered = self._fetch_with_playwright(source, url, source_dir)
+                result.documents.extend(rendered.documents)
+                result.errors.extend(rendered.errors)
+                result.discovered_urls.extend(rendered.discovered_urls)
 
         return result
 
@@ -98,7 +100,10 @@ class PublicFetcher:
         result = FetchRunResult(run_id=self.run_id, visited_sources=[source.id])
         source_dir = ensure_dir(self.raw_dir / source.id)
         for url in source.urls[: source.max_pages]:
-            if source.access_mode == "playwright_with_network_discovery":
+            if self._document_budget_exhausted():
+                result.errors.append(self._document_budget_error(source, url))
+                break
+            if source.access_mode == "playwright_with_network_discovery" and not settings.disable_playwright:
                 discovered = self._fetch_with_playwright(source, url, source_dir)
                 result.documents.extend(discovered.documents)
                 result.errors.extend(discovered.errors)
@@ -115,6 +120,9 @@ class PublicFetcher:
     def fetch_many(self, source_limit: int | None = None, pages: int | None = None, days: int | None = None) -> FetchRunResult:
         aggregate = FetchRunResult(run_id=self.run_id)
         for source in self.registry.select(limit=source_limit):
+            if self._document_budget_exhausted():
+                aggregate.errors.append(self._document_budget_error(source, source.urls[0] if source.urls else ""))
+                break
             result = self.fetch_source(source.id, pages=pages, days=days)
             aggregate.documents.extend(result.documents)
             aggregate.errors.extend(result.errors)
@@ -138,10 +146,16 @@ class PublicFetcher:
         candidates = self._candidate_links(source, doc.url, soup, cutoff_date=cutoff_date)
         detail_limit = max(4, page_budget * 4)
         attachment_limit = max(12, page_budget * 6)
+        if settings.memory_safe_mode:
+            detail_limit = min(detail_limit, 6)
+            attachment_limit = min(attachment_limit, 8)
         details_seen = 0
         attachments_seen = 0
 
         for url, text in candidates:
+            if self._document_budget_exhausted():
+                result.errors.append(self._document_budget_error(source, url))
+                break
             if self._is_attachment_url(source, url, text):
                 if attachments_seen >= attachment_limit:
                     continue
@@ -162,7 +176,7 @@ class PublicFetcher:
                         child,
                         source_dir,
                         result,
-                        attachment_limit=max(6, page_budget * 2),
+                        attachment_limit=min(max(6, page_budget * 2), 6) if settings.memory_safe_mode else max(6, page_budget * 2),
                         cutoff_date=cutoff_date,
                     )
 
@@ -179,6 +193,9 @@ class PublicFetcher:
         soup = BeautifulSoup(html, "html.parser")
         fetched = 0
         for url, text in self._candidate_links(source, detail_doc.url, soup, cutoff_date=cutoff_date):
+            if self._document_budget_exhausted():
+                result.errors.append(self._document_budget_error(source, url))
+                break
             if not self._is_attachment_url(source, url, text):
                 continue
             if fetched >= attachment_limit:
@@ -198,39 +215,64 @@ class PublicFetcher:
         source_dir: Path,
         parent_url: str | None = None,
     ) -> RawDocument | FetchError | None:
+        if self._document_budget_exhausted():
+            return None
         if not self.robots.allowed(url):
             return FetchError(source_id=source.id, url=url, reason="robots.txt disallows this URL")
 
         self._domain_delay(url, source.delay)
+        status_code: int | None = None
+        content_type = ""
+        filename_hint = ""
+        body = b""
         try:
-            response = self.client.get(url)
+            with self.client.stream("GET", url) as response:
+                status_code = response.status_code
+                if response.status_code in {401, 403, 429}:
+                    return FetchError(
+                        source_id=source.id,
+                        url=url,
+                        reason="access limited by source; crawler stopped for this URL",
+                        status_code=response.status_code,
+                    )
+                if response.status_code >= 400:
+                    return FetchError(
+                        source_id=source.id,
+                        url=url,
+                        reason=f"http status {response.status_code}; response body was not saved as a public document",
+                        status_code=response.status_code,
+                    )
+                length_error = self._content_length_error(source, url, response.headers, response.status_code)
+                if length_error:
+                    return length_error
+
+                content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+                filename_hint = filename_from_content_disposition(response.headers.get("content-disposition", ""))
+                body_chunks: list[bytes] = []
+                total_bytes = 0
+                for chunk in response.iter_bytes():
+                    total_bytes += len(chunk)
+                    if total_bytes > settings.max_response_bytes:
+                        return FetchError(
+                            source_id=source.id,
+                            url=url,
+                            reason=(
+                                f"response body exceeds memory-safe limit "
+                                f"({settings.max_response_bytes} bytes); skipped"
+                            ),
+                            status_code=response.status_code,
+                        )
+                    body_chunks.append(chunk)
+                body = b"".join(body_chunks)
         except httpx.HTTPError as exc:
             return FetchError(source_id=source.id, url=url, reason=f"http error: {exc}")
 
-        if response.status_code in {401, 403, 429}:
-            return FetchError(
-                source_id=source.id,
-                url=url,
-                reason="access limited by source; crawler stopped for this URL",
-                status_code=response.status_code,
-            )
-        if response.status_code >= 400:
-            return FetchError(
-                source_id=source.id,
-                url=url,
-                reason=f"http status {response.status_code}; response body was not saved as a public document",
-                status_code=response.status_code,
-            )
-
-        content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-        filename_hint = filename_from_content_disposition(response.headers.get("content-disposition", ""))
-        body = response.content
         if self._looks_blocked(body, content_type):
             return FetchError(
                 source_id=source.id,
                 url=url,
                 reason="captcha/login/access-limit marker found; no bypass attempted",
-                status_code=response.status_code,
+                status_code=status_code,
             )
         kind = refine_kind_from_body(infer_kind(url, content_type, filename_hint=filename_hint), body)
         if kind not in PUBLIC_DOCUMENT_KINDS:
@@ -238,14 +280,14 @@ class PublicFetcher:
                 source_id=source.id,
                 url=url,
                 reason=f"unsupported content kind '{kind}'; response body was not saved as an analyzable public document",
-                status_code=response.status_code,
+                status_code=status_code,
             )
         return self._save_raw_document(
             source,
             url,
             body,
             content_type,
-            response.status_code,
+            status_code,
             source_dir,
             parent_url,
             filename_hint=filename_hint,
@@ -265,6 +307,8 @@ class PublicFetcher:
         filename_hint: str = "",
         kind_override: RawKind | None = None,
     ) -> RawDocument | None:
+        if self._document_budget_exhausted() or len(body) > settings.max_response_bytes:
+            return None
         digest = content_hash(body)
         if digest in self.seen_hashes:
             return None
@@ -277,7 +321,7 @@ class PublicFetcher:
         metadata = {**(metadata or {})}
         if filename_hint:
             metadata["filename_hint"] = filename_hint
-        return RawDocument(
+        document = RawDocument(
             id=digest[:16],
             source_id=source.id,
             url=url,
@@ -290,9 +334,20 @@ class PublicFetcher:
             parent_url=parent_url,
             metadata=metadata,
         )
+        self.saved_documents += 1
+        return document
 
     def _fetch_with_playwright(self, source: SourceConfig, url: str, source_dir: Path) -> FetchRunResult:
         result = FetchRunResult(run_id=self.run_id, visited_sources=[source.id])
+        if settings.disable_playwright:
+            result.errors.append(
+                FetchError(
+                    source_id=source.id,
+                    url=url,
+                    reason="Playwright disabled by memory-safe runtime configuration; HTTP fallback used where possible",
+                )
+            )
+            return result
         if not self.robots.allowed(url):
             result.errors.append(FetchError(source_id=source.id, url=url, reason="robots.txt disallows this URL"))
             return result
@@ -335,9 +390,26 @@ class PublicFetcher:
                             )
                             return
                         filename_hint = filename_from_content_disposition(response.headers.get("content-disposition", ""))
+                        length_error = self._content_length_error(source, response_url, response.headers, response.status)
+                        if length_error:
+                            result.errors.append(length_error)
+                            return
                         response_kind = infer_kind(response_url, response_type, filename_hint=filename_hint)
                         if response_kind in PUBLIC_DOCUMENT_KINDS or response_type in {"", "application/octet-stream"}:
                             body = response.body()
+                            if len(body) > settings.max_response_bytes:
+                                result.errors.append(
+                                    FetchError(
+                                        source_id=source.id,
+                                        url=response_url,
+                                        reason=(
+                                            f"network response body exceeds memory-safe limit "
+                                            f"({settings.max_response_bytes} bytes); skipped"
+                                        ),
+                                        status_code=response.status,
+                                    )
+                                )
+                                return
                             response_kind = refine_kind_from_body(response_kind, body)
                         if response_kind in PUBLIC_DOCUMENT_KINDS:
                             if self._looks_blocked(body, response_type):
@@ -380,6 +452,20 @@ class PublicFetcher:
                 except Exception:
                     pass
                 body = page.content().encode("utf-8", errors="ignore")
+                if len(body) > settings.max_response_bytes:
+                    result.errors.append(
+                        FetchError(
+                            source_id=source.id,
+                            url=url,
+                            reason=(
+                                f"rendered page exceeds memory-safe limit "
+                                f"({settings.max_response_bytes} bytes); body ignored"
+                            ),
+                            status_code=200,
+                        )
+                    )
+                    browser.close()
+                    return result
                 if self._looks_blocked(body, "text/html"):
                     result.errors.append(
                         FetchError(
@@ -473,6 +559,52 @@ class PublicFetcher:
             except Exception:
                 pass
         return any(pattern.lower() in sample for pattern in BLOCK_PATTERNS)
+
+    def _should_use_playwright(
+        self,
+        source: SourceConfig,
+        doc: RawDocument | FetchError | None,
+    ) -> bool:
+        if settings.disable_playwright or self._document_budget_exhausted():
+            return False
+        if source.access_mode not in {"http_then_playwright", "playwright_with_network_discovery"}:
+            return False
+        return source.access_mode == "playwright_with_network_discovery" or (
+            doc is not None and not isinstance(doc, FetchError) and doc.kind == "html" and doc.file_path.stat().st_size < 5000
+        )
+
+    def _document_budget_exhausted(self) -> bool:
+        return self.saved_documents >= self.max_documents
+
+    def _document_budget_error(self, source: SourceConfig, url: str) -> FetchError:
+        return FetchError(
+            source_id=source.id,
+            url=url,
+            reason=f"raw document budget reached ({self.max_documents}); remaining URLs skipped",
+        )
+
+    def _content_length_error(
+        self,
+        source: SourceConfig,
+        url: str,
+        headers: httpx.Headers,
+        status_code: int | None,
+    ) -> FetchError | None:
+        content_length = headers.get("content-length", "").strip()
+        if not content_length:
+            return None
+        try:
+            byte_count = int(content_length)
+        except ValueError:
+            return None
+        if byte_count <= settings.max_response_bytes:
+            return None
+        return FetchError(
+            source_id=source.id,
+            url=url,
+            reason=f"response content-length {byte_count} exceeds memory-safe limit ({settings.max_response_bytes} bytes); skipped",
+            status_code=status_code,
+        )
 
 
 def chromium_launch_options() -> dict[str, object]:
