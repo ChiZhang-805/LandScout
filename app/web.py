@@ -364,7 +364,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     .status{display:flex;align-items:center;gap:10px;font-size:14px;font-weight:600;color:#25314a}.dot{width:10px;height:10px;border-radius:50%;background:#98a2b3;box-shadow:0 0 0 5px #eef2f7}.dot.running{background:var(--amber);box-shadow:0 0 0 5px #fff3e0}.dot.done{background:var(--green);box-shadow:0 0 0 5px #e7f7f2}.dot.error{background:var(--red);box-shadow:0 0 0 5px #fee4e2}
     .progress-block{display:grid;gap:8px}.progress-track{height:12px;background:#e3eaf2;border:1px solid #d8e1ec;border-radius:999px;overflow:hidden;position:relative;box-shadow:inset 0 1px 2px rgba(16,24,40,.08)}.progress-fill{height:100%;width:0%;border-radius:999px;background:#98a2b3;transition:width .45s ease,background .2s ease}.progress-fill.running{background:linear-gradient(90deg,var(--blue),var(--teal));position:relative}.progress-fill.running:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.46),transparent);animation:progress-shine 1.5s linear infinite}.progress-fill.done{background:var(--green)}.progress-fill.error{background:var(--red)}.progress-meta{display:flex;justify-content:space-between;gap:16px;font-size:12px;color:var(--muted);line-height:1.45}.progress-meta span:last-child{font-weight:700;color:#475467}@keyframes progress-shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
     .metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:8px}.metric{border:1px solid #e4e7ec;border-radius:8px;background:#f8fafc;padding:10px}.metric strong{display:flex;align-items:center;gap:6px;font-size:20px}.metric span{font-size:12px;color:var(--muted)}
-    .map-panel{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:720px}.map-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #e4e7ec;flex:0 0 auto}.map-title{font-size:15px;font-weight:700;line-height:1.2;display:flex;align-items:center;gap:8px}.map-sub{font-size:12px;color:var(--muted);margin-top:5px}.map-sub:empty{display:none}.map-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.map-tools input{width:190px;min-height:32px;font-size:12px}.map-tools button{min-height:32px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#344054;padding:6px 9px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px}
+    .map-panel{padding:0;overflow:hidden;display:flex;flex-direction:column;min-height:520px}.map-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 16px;border-bottom:1px solid #e4e7ec;flex:0 0 auto}.map-title{font-size:15px;font-weight:700;line-height:1.2;display:flex;align-items:center;gap:8px}.map-sub{font-size:12px;color:var(--muted);margin-top:5px}.map-sub:empty{display:none}.map-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}.map-tools input{width:190px;min-height:32px;font-size:12px}.map-tools button{min-height:32px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#344054;padding:6px 9px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px}
     #opportunityMap{height:auto;min-height:430px;flex:1;position:relative;background:#dfe7ef;overflow:hidden}.map-placeholder{position:absolute;inset:0;background:linear-gradient(90deg,rgba(255,255,255,.35) 1px,transparent 1px),linear-gradient(rgba(255,255,255,.35) 1px,transparent 1px),#dfe7ef;background-size:54px 54px;color:#334155}.map-placeholder:before{content:"上海坐标示意图";position:absolute;left:18px;top:16px;font-size:13px;font-weight:700;color:#334155}.map-placeholder:after{content:"输入高德 JS API Key 后显示真实地图";position:absolute;left:18px;top:38px;font-size:12px;color:#667085}.coord-dot{position:absolute;border:2px solid rgba(29,78,216,.82);background:rgba(29,78,216,.20);border-radius:50%;transform:translate(-50%,-50%);display:grid;place-items:center;color:#0f172a;font-size:12px;font-weight:700}.coord-label{position:absolute;transform:translate(12px,-50%);background:rgba(255,255,255,.92);border:1px solid #d7dee8;border-radius:6px;padding:5px 7px;font-size:12px;white-space:nowrap;box-shadow:0 1px 2px rgba(16,24,40,.08)}.legend{position:absolute;right:12px;bottom:12px;background:rgba(255,255,255,.94);border:1px solid #d7dee8;border-radius:6px;padding:8px 10px;font-size:12px;color:#344054}
     #areasPanel,#filesPanel{min-height:118px}.areas{display:grid;gap:10px}.area{border-top:1px solid #eef2f6;padding-top:12px}.area:first-child{border-top:0;padding-top:0}.area-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}.area-title{font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px}.badge{font-size:12px;color:#0f5132;background:#ecfdf3;border:1px solid #abefc6;border-radius:999px;padding:3px 8px;white-space:nowrap}
     .scoreline{display:grid;grid-template-columns:110px 1fr 58px;gap:8px;align-items:center;margin:10px 0}.bar{height:9px;background:#e7edf3;border-radius:999px;overflow:hidden}.fill{height:100%;background:var(--blue);border-radius:999px}.small{font-size:12px;color:var(--muted);line-height:1.55}.reason{font-size:12px;line-height:1.55;color:#344054;margin-top:8px}.risk{color:#7c2d12}.file-groups{display:grid;gap:14px}.file-group-title{font-size:12px;font-weight:700;color:#475467;margin-bottom:8px}.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(138px,1fr));gap:8px}.file{min-height:38px;font-size:12px;text-decoration:none;color:#1849a9;border:1px solid #b2ccff;background:#eff4ff;border-radius:6px;padding:7px 10px;display:flex;align-items:center;gap:6px;justify-content:flex-start}
@@ -502,6 +502,7 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     let amapLoading = null;
     let progressTimer = null;
     let progressValue = 0;
+    let customSourcesUserAdjusted = false;
     const ICONS = {
       alert: '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.7 2.4 17.4A2 2 0 0 0 4.1 20h15.8a2 2 0 0 0 1.7-2.6L13.7 3.7a2 2 0 0 0-3.4 0Z"/>',
       building: '<path d="M4 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M16 8h2a2 2 0 0 1 2 2v11"/><path d="M8 7h4"/><path d="M8 11h4"/><path d="M8 15h4"/><path d="M9 21v-3h2v3"/>',
@@ -604,20 +605,29 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
       if(!mapPanel){
         return;
       }
-      mapPanel.style.minHeight = "";
       mapPanel.style.height = "";
     }
     function alignCustomSourcesEditor(){
-      if(!customSourcesInput){
+      if(!customSourcesInput || customSourcesUserAdjusted){
         return;
       }
       const panel = customSourcesInput.closest(".panel");
       if(!panel){
         return;
       }
-      panel.style.height = "";
+      if(window.matchMedia("(max-width: 980px)").matches){
+        customSourcesInput.style.height = "";
+        customSourcesInput.style.minHeight = "";
+        return;
+      }
       customSourcesInput.style.height = "";
       customSourcesInput.style.minHeight = "";
+      const panelRect = panel.getBoundingClientRect();
+      const editorRect = customSourcesInput.getBoundingClientRect();
+      const panelChromeHeight = Math.max(0, panelRect.height - editorRect.height);
+      const bottomBreathingRoom = 8;
+      const targetHeight = Math.floor(window.innerHeight - panelRect.top - bottomBreathingRoom - panelChromeHeight);
+      customSourcesInput.style.height = `${Math.max(170, targetHeight)}px`;
     }
     function alignDashboardLayout(){
       alignMapToViewportBottom();
@@ -862,6 +872,12 @@ DASHBOARD_TEMPLATE = r"""<!doctype html>
     useBuiltin.addEventListener("change", renderSources);
     runBtn.addEventListener("click", runSearch);
     refreshMapBtn.addEventListener("click", () => renderOpportunityMap(lastAreas));
+    customSourcesInput.addEventListener("pointerdown", (event) => {
+      const rect = customSourcesInput.getBoundingClientRect();
+      if(event.clientX >= rect.right - 28 && event.clientY >= rect.bottom - 28){
+        customSourcesUserAdjusted = true;
+      }
+    });
     window.addEventListener("resize", () => window.requestAnimationFrame(alignDashboardLayout));
     hydrateStaticIcons();
     setupSecretToggles();
